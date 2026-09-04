@@ -1,6 +1,6 @@
 [project]
 site_name = "libwlite Documentation"
-site_description = "libwlite: A small C library for SQLite schema management, migrations, and queries. Core runtime for wlite."
+site_description = "libwlite: dbwarden's SQLite3 engine, extracted as a standalone C library. Schema management, migrations, and queries with developer-first design."
 site_url = "https://libwlite.dbwarden.org"
 docs_dir = "docs"
 site_dir = "site"
