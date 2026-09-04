@@ -1,0 +1,10 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+libdir=${prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+
+Name: wlite
+Description: A tiny SQLite schema and migration engine
+Version: @PROJECT_VERSION@
+Libs: -L${libdir} -lwlite
+Cflags: -I${includedir}/wlite
+Requires: sqlite3
