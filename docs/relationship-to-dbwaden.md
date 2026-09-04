@@ -9,7 +9,7 @@ dbwarden is a declarative schema compiler for Python and SQLAlchemy. It is
 feature-rich: multi-database support, plugin systems, async drivers, seed
 management, and more.
 
-wlite is what happens when you take dbwarden's SQLite3 engine and remove
+libwlite is what happens when you take dbwarden's SQLite3 engine and remove
 everything except SQLite. The table rebuild algorithms, type normalization,
 collapse logic, and constraint diffing that make dbwarden's SQLite support
 production-grade are implemented in libwlite as a standalone C library.
@@ -31,7 +31,7 @@ rebuilds, and table rewrites with the same rigor as the PostgreSQL engine. But
 it was still bundled inside a Python package that required SQLAlchemy, pip, and
 a runtime interpreter.
 
-wlite was created to extract that SQLite engine into something that could run
+libwlite was created to extract that SQLite engine into something that could run
 without Python. The goal was a single C library that any language could link
 against. The project started by isolating the core schema diffing algorithm from
 dbwarden's SQLite backend and rewriting it in portable C.
@@ -190,7 +190,7 @@ definition.
 dbwarden and wlite share the `.wlite` model file format. This is a
 declarative format for describing SQLite schemas. dbwarden can read `.wlite`
 files directly, allowing a single schema definition to drive both the
-dbwarden and wlite workflows.
+dbwarden and libwlite workflows.
 
 A `.wlite` file describes tables, columns, constraints, and indexes in a
 plain text format that is easy to read and version control.
@@ -242,7 +242,7 @@ tools without modification.
 A CI workflow keeps libwlite's behavior synchronized with dbwarden's SQLite
 backend. The workflow runs identical test suites against both implementations
 and fails if the outputs diverge. This means improvements to dbwarden's schema
-management automatically benefit wlite, and fixes in wlite propagate back to
+management automatically benefit libwlite, and fixes in libwlite propagate back to
 dbwarden.
 
 ### The sync workflow
@@ -262,7 +262,7 @@ The workflow performs these steps:
 
 ### Step-by-step detail
 
-**Checkout**: The CI runner clones both the dbwarden and wlite repositories
+**Checkout**: The CI runner clones both the dbwarden and libwlite repositories
 into a shared workspace. The repos are placed in sibling directories so that
 file paths can be resolved between them.
 
@@ -289,7 +289,7 @@ set of reference `.wlite` files. The smoke test verifies that the CLI can
 parse `.wlite` files, generate SQL, and exit cleanly.
 
 **SQL comparison**: The most important step. The CI script feeds a set of
-reference schemas to both dbwarden and wlite and captures the generated SQL.
+reference schemas to both dbwarden and libwlite and captures the generated SQL.
 It then performs a line-by-line comparison of the SQL output. Any difference
 in the generated SQL causes the workflow to fail.
 
@@ -321,13 +321,13 @@ workflow ensures that neither project falls behind.
 
 This bidirectional flow means that both projects benefit from each other's
 user base. dbwarden's large Python community exercises the SQLite backend in
-ways that wlite's smaller community might not. wlite's use in embedded
+ways that libwlite's smaller community might not. libwlite's use in embedded
 systems and firmware projects surfaces edge cases that dbwarden's Python
 users might not encounter.
 
 ## Feature comparison
 
-| Feature | dbwarden | wlite |
+| Feature | dbwarden | libwlite |
 |---------|----------|-------|
 | SQLite schema management | Yes | Yes |
 | PostgreSQL support | Yes | No |
@@ -364,17 +364,17 @@ users might not encounter.
 | Web application with PostgreSQL | dbwarden | Native PostgreSQL support |
 | Web application with SQLite | Either | Both handle SQLite equally |
 | CLI tool for schema management | wlite | Single binary, no runtime |
-| Embedded firmware database | wlite | C library, no Python needed |
+| Embedded firmware database | libwlite | C library, no Python needed |
 | Microservice with SQLAlchemy | dbwarden | Natural Python integration |
-| IoT device with local storage | wlite | Minimal dependencies |
-| Build-time schema generation | wlite | Fast, no interpreter overhead |
+| IoT device with local storage | libwlite | Minimal dependencies |
+| Build-time schema generation | libwlite | Fast, no interpreter overhead |
 | Database migration scripts | Either | Both output plain SQL |
 | Schema version control | Either | Both produce deterministic output |
 | Multi-database project | dbwarden | Only tool with multi-db support |
-| Cross-language project | wlite | Bindings for 6+ languages |
+| Cross-language project | libwlite | Bindings for 6+ languages |
 | Prototyping in Python | dbwarden | Quick iteration with SQLAlchemy |
-| Production embedded system | wlite | Stable ABI, predictable behavior |
-| Team with mixed language skills | wlite | Everyone can use the same tool |
+| Production embedded system | libwlite | Stable ABI, predictable behavior |
+| Team with mixed language skills | libwlite | Everyone can use the same tool |
 
 ## Performance comparison
 
@@ -383,13 +383,13 @@ implementation languages and runtime requirements.
 
 ### Startup time
 
-wlite starts in microseconds. The C binary loads and begins executing
+libwlite starts in microseconds. The C binary loads and begins executing
 immediately. dbwarden requires Python interpreter startup, SQLAlchemy
 import, and module resolution, which typically takes hundreds of milliseconds.
 
 For CLI tools that are invoked frequently (such as in build scripts or
 pre-commit hooks), this difference is significant. A build step that invokes
-wlite 50 times per build will complete much faster than the same step using
+libwlite 50 times per build will complete much faster than the same step using
 dbwarden.
 
 ### Memory usage

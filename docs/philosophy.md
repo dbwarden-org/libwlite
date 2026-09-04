@@ -1,11 +1,11 @@
 ---
 title: Philosophy
-description: The declarative philosophy behind wlite and how it compares to imperative migration tools.
+description: The declarative philosophy behind libwlite and how it compares to imperative migration tools.
 ---
 
 # Philosophy
 
-wlite follows the dbwarden principle: **your schema is the source of truth, not migration scripts**. You declare the tables, fields, and constraints you want in a `.wlite` model file. The tooling computes the diff against the live database and generates plain SQL to close the gap.
+libwlite follows the dbwarden principle: **your schema is the source of truth, not migration scripts**. You declare the tables, fields, and constraints you want in a `.wlite` model file. The tooling computes the diff against the live database and generates plain SQL to close the gap.
 
 This document explains why that matters, how it compares to other approaches, and where each strategy fits best.
 
@@ -45,7 +45,7 @@ model User {
 }
 ```
 
-Then wlite compares that model against the live database and generates the minimal SQL to reach the desired state. If the table does not exist, it creates it. If columns are missing, it adds them. If types have changed, it rebuilds the table. You never write `ALTER TABLE` by hand.
+Then libwlite compares that model against the live database and generates the minimal SQL to reach the desired state. If the table does not exist, it creates it. If columns are missing, it adds them. If types have changed, it rebuilds the table. You never write `ALTER TABLE` by hand.
 
 This means:
 
@@ -74,7 +74,7 @@ def downgrade():
 
 You must remember to run the migration. You must remember the correct column type. You must decide whether the column is nullable. If someone else adds a conflicting migration between yours and the next deploy, you have a merge conflict to resolve.
 
-### Declarative (wlite)
+### Declarative (libwlite)
 
 You add the field to the model file:
 
@@ -107,7 +107,7 @@ model User {
 }
 ```
 
-You run `wlite migrate`. wlite detects the new column and generates:
+You run `wlite migrate`. libwlite detects the new column and generates:
 
 ```sql
 ALTER TABLE "users" ADD COLUMN "phone_number" TEXT;
@@ -142,7 +142,7 @@ field full_name text {
 }
 ```
 
-wlite detects that `full_name` is missing and `name` exists. It generates a rename migration using `ALTER TABLE "users" RENAME COLUMN "name" TO "full_name"`. Data is preserved. The developer does not need to think about the mechanics.
+libwlite detects that `full_name` is missing and `name` exists. It generates a rename migration using `ALTER TABLE "users" RENAME COLUMN "name" TO "full_name"`. Data is preserved. The developer does not need to think about the mechanics.
 
 ## Side by side: dropping a column
 
@@ -157,7 +157,7 @@ You must remember to remove the column from every migration that references it. 
 
 ### Declarative
 
-You remove the field from the model. wlite detects the column exists in the database but not in the model, and generates:
+You remove the field from the model. libwlite detects the column exists in the database but not in the model, and generates:
 
 ```sql
 ALTER TABLE "users" DROP COLUMN "phone_number";
@@ -171,7 +171,7 @@ The SQLite3 backend in dbwarden handles table rebuilds, collapse logic, type nor
 
 When dbwarden improves how it handles a type, default, or constraint, those improvements flow into libwlite. When libwlite finds an edge case in SQLite schema diffing, the fix propagates back to dbwarden. The two projects share a common core of schema management logic, expressed in different languages for different audiences.
 
-This means you get the same algorithm whether you are using dbwarden from Ruby or wlite from C, C++, or another language with bindings. The diff output is identical. The migration SQL is identical. The behavior is identical.
+This means you get the same algorithm whether you are using dbwarden from Python or libwlite from C, C++, Rust, or any other language with bindings. The diff output is identical. The migration SQL is identical. The behavior is identical.
 
 ## Compared to raw SQLite
 
@@ -196,7 +196,7 @@ ALTER TABLE users ADD COLUMN phone_number TEXT;
 
 Now the setup script says the table has four columns, but the database has five. New developers who run the setup script from scratch get a different schema than developers who ran the incremental script. This is schema drift, and it is invisible until something breaks.
 
-wlite adds declarative schema management on top of SQLite without changing the database engine itself. The model file always describes the complete schema. The diff algorithm always computes what needs to change. There is no drift.
+libwlite adds declarative schema management on top of SQLite without changing the database engine itself. The model file always describes the complete schema. The diff algorithm always computes what needs to change. There is no drift.
 
 ## Compared to SQLAlchemy + Alembic
 
@@ -208,13 +208,13 @@ Alembic is the standard migration tool for SQLAlchemy. It works well, but it has
 - **Downgrade scripts**: Alembic requires you to write downgrade functions. Most teams do not test these. They rot.
 - **Branching conflicts**: When two developers add migrations on different branches, you get a merge conflict in the migration chain. Resolving it requires careful ordering and sometimes manual edits.
 
-wlite does not require SQLAlchemy, does not require Python (if you use the C or C++ bindings), and does not maintain a migration chain. You describe the desired state and wlite computes the diff. There are no numbered migrations to order, no downgrade functions to maintain, and no merge conflicts in a chain.
+libwlite does not require SQLAlchemy, does not require Python, and does not maintain a migration chain. You describe the desired state and libwlite computes the diff. There are no numbered migrations to order, no downgrade functions to maintain, and no merge conflicts in a chain.
 
 ### When Alembic is the right choice
 
 If your application is in Python, uses SQLAlchemy extensively, and needs runtime model introspection, Alembic may be the better tool. Alembic integrates tightly with SQLAlchemy's ORM, and if you are already paying the cost of that dependency, the marginal cost of Alembic is low.
 
-wlite is designed for teams that want schema management without the ORM tax. If your application is not in Python, or if you want a tool that works across languages, wlite is the better choice.
+libwlite is designed for teams that want schema management without the ORM tax. If your application is not in Python, or if you want a tool that works across languages, libwlite is the better choice.
 
 ## Compared to other SQLite migration tools
 
@@ -228,7 +228,7 @@ Common tools in this category include:
 
 All of these tools solve the same problem: apply SQL scripts in order and remember which ones have run. None of them solve the problem of computing what SQL to write in the first place.
 
-wlite performs a full schema diff, including type normalization, default handling, and constraint analysis. It produces minimal SQL regardless of the current state. The other tools apply whatever SQL you wrote, even if it is redundant or incorrect.
+libwlite performs a full schema diff, including type normalization, default handling, and constraint analysis. It produces minimal SQL regardless of the current state. The other tools apply whatever SQL you wrote, even if it is redundant or incorrect.
 
 ## Compared to no schema management at all
 
@@ -241,7 +241,7 @@ Common failure modes of no schema management:
 - **Silent data loss**: A column is dropped in one environment but not another. Queries that reference the missing column fail silently or return wrong results.
 - **CI gaps**: Tests pass because they run against a schema that is different from production. Bugs appear only in production.
 
-wlite gives you a single source of truth that can be validated, versioned, and tested. The model file is always the complete schema. The diff algorithm always produces the correct SQL. CI tests the desired state.
+libwlite gives you a single source of truth that can be validated, versioned, and tested. The model file is always the complete schema. The diff algorithm always produces the correct SQL. CI tests the desired state.
 
 ## Cost analysis
 
@@ -257,7 +257,7 @@ Imperative migrations require the developer to:
 6. Test the rollback backward (rarely done).
 7. Resolve merge conflicts if another developer added a migration in the same area.
 
-wlite requires the developer to:
+libwlite requires the developer to:
 
 1. Update the model file.
 2. Run `wlite migrate`.
@@ -274,7 +274,7 @@ Imperative CI must:
 3. Run the test suite against the resulting schema.
 4. Optionally, test each migration individually.
 
-wlite CI must:
+libwlite CI must:
 
 1. Start with a clean database.
 2. Run `wlite migrate`.
@@ -286,11 +286,11 @@ There is no migration chain to replay. CI runs faster and is simpler to maintain
 
 Imperative migrations accumulate. After two years, a project might have 300 migration files. Each one must be understood, maintained, and occasionally debugged. Deleting a migration breaks the chain. Reordering a migration can change the meaning of subsequent migrations.
 
-wlite has no migration chain. The model file is the only artifact that must be maintained. Old migration files are not needed because wlite always computes the diff from the current state. The maintenance burden is constant regardless of how many changes have been made.
+libwlite has no migration chain. The model file is the only artifact that must be maintained. Old migration files are not needed because libwlite always computes the diff from the current state. The maintenance burden is constant regardless of how many changes have been made.
 
 ### Summary table
 
-| Cost category | Imperative | Declarative (wlite) |
+| Cost category | Imperative | Declarative (libwlite) |
 |---------------|------------|---------------------|
 | Developer time per change | 20-40 minutes | 5-10 minutes |
 | CI complexity | High (replay chain) | Low (single migrate) |
@@ -312,31 +312,31 @@ Two developers add migrations on different branches:
 
 Both migrations claim to be number 0047. When the branches merge, one developer must rename their migration to 0048. But now the chain order depends on which migration runs first, and the developer must reason about whether the order matters.
 
-With wlite, both developers add fields to the model file. The merge conflict is in the model file, which is a simple text merge. wlite computes the correct diff regardless of which field was added first.
+With libwlite, both developers add fields to the model file. The merge conflict is in the model file, which is a simple text merge. wlite computes the correct diff regardless of which field was added first.
 
 ### The deleted migration
 
 A developer deletes migration 0023 because it was superseded by migration 0045. The chain breaks. Every migration after 0023 references 0022 as its parent, but migration 0024 expects 0023 to exist.
 
-With wlite, there are no numbered migrations. The model file is the only artifact. There is nothing to delete and nothing to break.
+With libwlite, there are no numbered migrations. The model file is the only artifact. There is nothing to delete and nothing to break.
 
 ### The reordered migration
 
 A developer realizes that migration 0015 must run before migration 0010 for the schema to be consistent. They reorder the migrations. Now every migration after 0015 has the wrong parent reference. The entire chain must be renumbered.
 
-With wlite, ordering is irrelevant. The diff algorithm computes the correct SQL regardless of the order in which changes were made.
+With libwlite, ordering is irrelevant. The diff algorithm computes the correct SQL regardless of the order in which changes were made.
 
 ### The long chain
 
 After three years, a project has 400 migrations. Running `alembic upgrade head` from scratch takes five minutes because each migration is applied individually. New developers must wait five minutes for the database to be ready. CI must wait five minutes for the database to be ready.
 
-With wlite, `wlite migrate` computes the diff once and applies the minimal SQL. The time to reach the desired state is the time to execute the resulting SQL, not the time to replay 400 historical transformations.
+With libwlite, `wlite migrate` computes the diff once and applies the minimal SQL. The time to reach the desired state is the time to execute the resulting SQL, not the time to replay 400 historical transformations.
 
 ### The failed migration
 
 Migration 0150 fails halfway through. The database is now in an unknown state: some changes from 0150 were applied, others were not. The developer must figure out which changes were applied and manually fix the database before retrying.
 
-With wlite, the diff is computed from the current state. If a previous migration failed, the diff will include the changes that were not applied. There is no partial state to reason about.
+With libwlite, the diff is computed from the current state. If a previous migration failed, the diff will include the changes that were not applied. There is no partial state to reason about.
 
 ## How wlite's diff algorithm works at a high level
 
@@ -344,7 +344,7 @@ wlite's diff algorithm compares the model file against the live database schema 
 
 ### Step 1: introspect the database
 
-wlite reads the live database schema using SQLite's `sqlite_master` table and `PRAGMA table_info`. It collects:
+libwlite reads the live database schema using SQLite's `sqlite_master` table and `PRAGMA table_info`. It collects:
 
 - Table names and their definitions.
 - Column names, types, nullability, defaults, and primary key status.
@@ -353,7 +353,7 @@ wlite reads the live database schema using SQLite's `sqlite_master` table and `P
 
 ### Step 2: parse the model file
 
-wlite parses the `.wlite` model file and extracts the desired schema:
+libwlite parses the `.wlite` model file and extracts the desired schema:
 
 - Model names and their table mappings.
 - Field names, types, constraints, and defaults.
@@ -361,11 +361,11 @@ wlite parses the `.wlite` model file and extracts the desired schema:
 
 ### Step 3: normalize
 
-SQLite has flexible type affinity. A column defined as `VARCHAR(255)` and a column defined as `TEXT` are equivalent in SQLite. wlite normalizes types to a canonical form before comparison. This prevents false positives where the model says `TEXT` but the database says `VARCHAR`.
+SQLite has flexible type affinity. A column defined as `VARCHAR(255)` and a column defined as `TEXT` are equivalent in SQLite. libwlite normalizes types to a canonical form before comparison. This prevents false positives where the model says `TEXT` but the database says `VARCHAR`.
 
 ### Step 4: compute the diff
 
-wlite compares the normalized model schema against the normalized database schema:
+libwlite compares the normalized model schema against the normalized database schema:
 
 - Tables in the model but not in the database need to be created.
 - Tables in the database but not in the model need to be dropped (or flagged for review).
@@ -373,11 +373,11 @@ wlite compares the normalized model schema against the normalized database schem
 - Columns in the database but not in the model need to be removed.
 - Columns that exist in both but differ in type, nullability, or default need to be rebuilt.
 
-For table rebuilds, wlite uses SQLite's `CREATE TABLE ... AS SELECT` pattern to preserve data while restructuring the table.
+For table rebuilds, libwlite uses SQLite's `CREATE TABLE ... AS SELECT` pattern to preserve data while restructuring the table.
 
 ### Step 5: generate SQL
 
-wlite generates the minimal SQL to close the gap. It produces standard SQL that can be reviewed, modified, and run outside of wlite if needed. The generated SQL is deterministic: the same model and database state always produce the same SQL.
+libwlite generates the minimal SQL to close the gap. It produces standard SQL that can be reviewed, modified, and run outside of libwlite if needed. The generated SQL is deterministic: the same model and database state always produce the same SQL.
 
 ### What makes this different
 
@@ -385,7 +385,7 @@ Other tools generate SQL by comparing migration files against the database. wlit
 
 ## Why plain SQL output matters
 
-wlite generates plain SQL, not a proprietary format. This matters for several reasons.
+libwlite generates plain SQL, not a proprietary format. This matters for several reasons.
 
 ### Auditability
 
@@ -455,7 +455,7 @@ The model file does not depend on other files. It does not reference migration n
 - **Incremental migrations**: each migration is the full diff from current state to desired state. There is no chain of revision scripts. This is a feature, not a limitation, but it means you cannot replay a single historical migration.
 - **Cross-database support**: wlite is designed for SQLite. It does not support PostgreSQL, MySQL, or other databases. If you need cross-database schema management, use a tool like Alembic or Flyway.
 - **Runtime schema inspection**: wlite is a build-time tool. It does not inspect or modify schemas at runtime. If your application needs to modify its schema at runtime, you need a different approach.
-- **Automatic data backup before rebuild**: when wlite rebuilds a table (for type or constraint changes), it uses `CREATE TABLE ... AS SELECT` to preserve data. This is not a full backup. If the rebuild fails partway through, you may lose data. Always back up before running migrations on production databases.
+- **Automatic data backup before rebuild**: when libwlite rebuilds a table (for type or constraint changes), it uses `CREATE TABLE ... AS SELECT` to preserve data. This is not a full backup. If the rebuild fails partway through, you may lose data. Always back up before running migrations on production databases.
 
 ## Real world scenarios
 
@@ -469,7 +469,7 @@ A large company needs an audit trail of every schema change. They use version co
 
 ### Scenario 3: open source library
 
-An open source library uses SQLite for local storage. Contributors use many different languages. The library provides wlite model files and uses libwlite bindings in each language. The schema is described once and managed consistently across all language implementations.
+An open source library uses SQLite for local storage. Contributors use many different languages. The library provides libwlite model files and uses libwlite bindings in each language. The schema is described once and managed consistently across all language implementations.
 
 ### Scenario 4: legacy migration
 
@@ -477,10 +477,10 @@ A team has a legacy database with no schema management. They need to bring it un
 
 ### Scenario 5: multi-branch development
 
-Five developers are working on different features that all touch the database schema. With imperative tools, their migrations conflict regularly. With wlite, they all edit the model file. Merge conflicts are simple text conflicts in a single file, not ordering problems in a migration chain.
+Five developers are working on different features that all touch the database schema. With imperative tools, their migrations conflict regularly. With libwlite, they all edit the model file. Merge conflicts are simple text conflicts in a single file, not ordering problems in a migration chain.
 
 ## Summary
 
-wlite's declarative approach is not just a different way to write the same thing. It is a fundamentally different way to think about schema management. Instead of tracking how the schema changed, you describe what the schema should be. Instead of replaying history, you compute the diff. Instead of maintaining hundreds of migration files, you maintain one model file.
+libwlite's declarative approach is not just a different way to write the same thing. It is a fundamentally different way to think about schema management. Instead of tracking how the schema changed, you describe what the schema should be. Instead of replaying history, you compute the diff. Instead of maintaining hundreds of migration files, you maintain one model file.
 
 The model file is the source of truth. The diff algorithm computes the path from the current state to the desired state. The generated SQL is plain, reviewable, and portable. The result is a simpler, more reliable, and more maintainable approach to SQLite schema management.
