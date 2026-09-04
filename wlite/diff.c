@@ -134,6 +134,26 @@ static int cols_equal(WlColumn *a, WlColumn *b) {
            str_null_eq(a->fk_column, b->fk_column);
 }
 
+/* Compare column definitions excluding name (for rename detection) */
+static int cols_def_equal(WlColumn *a, WlColumn *b) {
+    char ta[64] = {0}, tb[64] = {0};
+    if (a->type_name) { size_t n = strlen(a->type_name); if (n > 63) n = 63; for (size_t i = 0; i < n; i++) ta[i] = toupper((unsigned char)a->type_name[i]); }
+    if (b->type_name) { size_t n = strlen(b->type_name); if (n > 63) n = 63; for (size_t i = 0; i < n; i++) tb[i] = toupper((unsigned char)b->type_name[i]); }
+
+    return strcmp(ta, tb) == 0 &&
+           a->not_null == b->not_null &&
+           a->primary_key == b->primary_key &&
+           a->is_unique == b->is_unique &&
+           a->autoincrement == b->autoincrement &&
+           a->is_generated == b->is_generated &&
+           a->is_stored == b->is_stored &&
+           defaults_equal(a->default_expr, b->default_expr) &&
+           str_null_eq(a->collate, b->collate) &&
+           str_null_eq(a->generated_expr, b->generated_expr) &&
+           str_null_eq(a->fk_table, b->fk_table) &&
+           str_null_eq(a->fk_column, b->fk_column);
+}
+
 static int fkey_eq(WlForeignKey *a, WlForeignKey *b) {
     if (a->column_count != b->column_count) return 0;
     if (a->ref_column_count != b->ref_column_count) return 0;
@@ -223,7 +243,7 @@ WlDiff *wl_schema_diff(const WlSchema *current, const WlSchema *desired, wlite_e
                 for (size_t k = 0; k < dt->column_count; k++) {
                     WlColumn *maybe_new = &dt->columns[k];
                     if (find_column(ct, maybe_new->name)) continue; /* already exists */
-                    if (cols_equal(cc, maybe_new)) {
+                    if (cols_def_equal(cc, maybe_new)) {
                         /* Same definition, different name: confirmed rename */
                         diff_add(diff, WL_DIFF_RENAME_COLUMN, WL_SAFETY_SAFE,
                                  dt->name, cc->name, maybe_new->name);

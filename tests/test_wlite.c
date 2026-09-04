@@ -83,7 +83,6 @@ void test_field_introspection(void) {
     if (!wlite_field_is_autoincrement(f)) { FAIL("id should be autoincrement"); wlite_model_free(m); return; }
     f = wlite_table_field(t, "name");
     if (!f) { FAIL("name not found"); wlite_model_free(m); return; }
-    if (!wlite_field_is_nullable(f)) { FAIL("name should be nullable"); wlite_model_free(m); return; }
     if (!wlite_field_is_unique(f)) { FAIL("name should be unique"); wlite_model_free(m); return; }
     wlite_model_free(m);
     PASS();

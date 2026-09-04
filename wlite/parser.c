@@ -276,7 +276,7 @@ static int parse_field(Lexer *l, WlTable *table, wlite_error **err) {
                 if (a.type != TOK_IDENT) { next_token(l); continue; }
                 if (match_ident_ci(l, "primary_key")) col.primary_key = 1;
                 else if (match_ident_ci(l, "autoincrement")) col.autoincrement = 1;
-                else if (match_ident_ci(l, "not")) { match_ident_ci(l, "null"); col.not_null = 1; }
+                else if (match_ident_ci(l, "not_null")) col.not_null = 1;
                 else if (match_ident_ci(l, "unique")) col.is_unique = 1;
                 else if (match_ident_ci(l, "default")) col.default_expr = consume_expr(l);
                 else if (match_ident_ci(l, "collate")) col.collate = expect_ident(l, err);
@@ -308,7 +308,7 @@ static int parse_field(Lexer *l, WlTable *table, wlite_error **err) {
         /* bare attributes without braces (e.g. "primary_key" on its own line) */
         if (match_ident_ci(l, "primary_key")) col.primary_key = 1;
         else if (match_ident_ci(l, "autoincrement")) col.autoincrement = 1;
-        else if (match_ident_ci(l, "not")) { match_ident_ci(l, "null"); col.not_null = 1; }
+        else if (match_ident_ci(l, "not_null")) col.not_null = 1;
         else if (match_ident_ci(l, "unique")) col.is_unique = 1;
         else break;
     }
