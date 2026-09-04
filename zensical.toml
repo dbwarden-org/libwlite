@@ -52,8 +52,16 @@ name = "libwlite on GitHub"
 [[project.nav]]
 Overview = [
   {Overview = "index.md"},
-  {Architecture = "architecture.md"},
   {"Grammar" = "grammar.md"},
+]
+
+[[project.nav]]
+Architecture = [
+  {Overview = "architecture/index.md"},
+  {"Data Flow" = "architecture/data-flow.md"},
+  {"Migration Internals" = "architecture/migration-internals.md"},
+  {"SQLite Patterns" = "architecture/sqlite-patterns.md"},
+  {"Memory and Errors" = "architecture/memory-and-errors.md"},
 ]
 
 [[project.nav]]
