@@ -52,6 +52,8 @@ name = "libwlite on GitHub"
 [[project.nav]]
 Overview = [
   {Overview = "index.md"},
+  {Philosophy = "philosophy.md"},
+  {"Relationship to dbwarden" = "relationship-to-dbwaden.md"},
   {"Grammar" = "grammar.md"},
   {"Workflow" = "workflow.md"},
 ]
