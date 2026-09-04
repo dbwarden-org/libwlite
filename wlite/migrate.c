@@ -168,6 +168,13 @@ size_t wlite_plan_count(const WlPlan *plan) {
 /* ── Verify ──────────────────────────────────────────────────────────── */
 
 wlite_result wl_schema_verify(wlite_db *db, const WlSchema *expected, WlDiff **difference, wlite_error **error) {
+    if (!db || !expected) {
+        if (error && !*error) {
+            *error = calloc(1, sizeof(wlite_error));
+            if (*error) { (*error)->code = WLITE_INVALID_ARGUMENT; (*error)->message = strdup("NULL argument"); }
+        }
+        return WLITE_INVALID_ARGUMENT;
+    }
     WlSchema *actual = wl_schema_introspect(db->sqlite, error);
     if (!actual) return WLITE_ERROR;
     WlDiff *diff = wl_schema_diff(actual, expected, error);

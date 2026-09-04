@@ -274,6 +274,152 @@ void test_plan_has_sql(void) {
     PASS();
 }
 
+/* ── Edge case tests ──────────────────────────────────────────────────── */
+
+void test_empty_model(void) {
+    TEST("edge: empty model (no tables)");
+    wlite_db *db = NULL;
+    wlite_open(":memory:", &db);
+    wlite_model *m = NULL;
+    wlite_result rc = wlite_model_load_memory("", 0, &m);
+    /* Empty model should fail to parse */
+    if (rc == WLITE_OK && m) {
+        /* If it somehow loaded, migrate should be a no-op */
+        wlite_result mrc = wlite_migrate(db, m);
+        wlite_model_free(m);
+        wlite_close(db);
+        if (mrc != WLITE_OK) { FAIL("migrate empty model"); return; }
+    } else {
+        /* Expected: parse error for empty input */
+        wlite_close(db);
+    }
+    PASS();
+}
+
+void test_single_column_table(void) {
+    TEST("edge: table with single column");
+    wlite_db *db = NULL;
+    wlite_open(":memory:", &db);
+    wlite_model *m = load_str(
+        "model T { table \"t\" field id integer { primary_key } }");
+    wlite_result rc = wlite_migrate(db, m);
+    wlite_model_free(m);
+    if (rc != WLITE_OK) { FAIL("migrate"); wlite_close(db); return; }
+    wlite_stmt *s = NULL;
+    wlite_prepare(db, "SELECT count(*) FROM pragma_table_info('t')", &s);
+    wlite_step(s);
+    int ok = (wlite_column_int64(s, 0) == 1);
+    wlite_stmt_finalize(s);
+    wlite_close(db);
+    if (!ok) { FAIL("expected 1 column"); return; }
+    PASS();
+}
+
+void test_many_columns(void) {
+    TEST("edge: table with many columns (20)");
+    wlite_db *db = NULL;
+    wlite_open(":memory:", &db);
+    char model[2048];
+    strcpy(model, "model T { table \"t\" field id integer { primary_key } ");
+    for (int i = 0; i < 20; i++) {
+        char col[64];
+        sprintf(col, "field col%d text ", i);
+        strcat(model, col);
+    }
+    strcat(model, "}");
+    wlite_model *m = load_str(model);
+    wlite_result rc = wlite_migrate(db, m);
+    wlite_model_free(m);
+    wlite_close(db);
+    if (rc != WLITE_OK) { FAIL("migrate"); return; }
+    PASS();
+}
+
+void test_rename_same_definition(void) {
+    TEST("edge: rename with identical definition (not null, unique)");
+    wlite_db *db = NULL;
+    wlite_open(":memory:", &db);
+    wlite_execute(db, "CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE)", NULL);
+    WlSchema *db_s = wl_schema_inspect(db, NULL);
+    const char *model = 
+        "model T {\n"
+        "    table \"t\"\n"
+        "    field id integer { primary_key }\n"
+        "    field full_name text { not_null unique }\n"
+        "}\n";
+    WlSchema *wl_s = wl_schema_parse(model, strlen(model), NULL);
+    WlDiff *diff = wl_schema_diff(db_s, wl_s, NULL);
+    wl_schema_free(db_s);
+    wl_schema_free(wl_s);
+    wlite_close(db);
+    if (!diff) { FAIL("diff NULL"); return; }
+    int renames = 0, drops = 0, adds = 0;
+    for (size_t i = 0; i < diff->entry_count; i++) {
+        if (diff->entries[i].op == WL_DIFF_RENAME_COLUMN) renames++;
+        if (diff->entries[i].op == WL_DIFF_DROP_COLUMN) drops++;
+        if (diff->entries[i].op == WL_DIFF_ADD_COLUMN) adds++;
+    }
+    wl_diff_free(diff);
+    if (renames != 1) { FAIL("expected 1 rename"); return; }
+    if (drops != 0 || adds != 0) { FAIL("should not have drop/add"); return; }
+    PASS();
+}
+
+void test_rename_and_type_change(void) {
+    TEST("edge: rename AND type change should be drop+add, not rename");
+    wlite_db *db = NULL;
+    wlite_open(":memory:", &db);
+    wlite_execute(db, "CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT NOT NULL)", NULL);
+    WlSchema *db_s = wl_schema_inspect(db, NULL);
+    /* Rename name->username AND change type TEXT->INTEGER */
+    const char *model = 
+        "model T {\n"
+        "    table \"t\"\n"
+        "    field id integer { primary_key }\n"
+        "    field username integer\n"
+        "}\n";
+    WlSchema *wl_s = wl_schema_parse(model, strlen(model), NULL);
+    WlDiff *diff = wl_schema_diff(db_s, wl_s, NULL);
+    wl_schema_free(db_s);
+    wl_schema_free(wl_s);
+    wlite_close(db);
+    if (!diff) { FAIL("diff NULL"); return; }
+    int renames = 0, drops = 0, adds = 0;
+    for (size_t i = 0; i < diff->entry_count; i++) {
+        if (diff->entries[i].op == WL_DIFF_RENAME_COLUMN) renames++;
+        if (diff->entries[i].op == WL_DIFF_DROP_COLUMN) drops++;
+        if (diff->entries[i].op == WL_DIFF_ADD_COLUMN) adds++;
+    }
+    wl_diff_free(diff);
+    if (renames != 0) { FAIL("should NOT rename when definitions differ"); return; }
+    if (drops != 1 || adds != 1) { FAIL("expected drop+add"); return; }
+    PASS();
+}
+
+void test_verify_null_args(void) {
+    TEST("edge: wl_schema_verify with NULL args");
+    wlite_result r1 = wl_schema_verify(NULL, NULL, NULL, NULL);
+    if (r1 != WLITE_INVALID_ARGUMENT) { FAIL("expected INVALID_ARGUMENT for NULL db"); return; }
+    PASS();
+}
+
+void test_diff_null_schemas(void) {
+    TEST("edge: wl_schema_diff with NULL schemas");
+    WlDiff *d = wl_schema_diff(NULL, NULL, NULL);
+    if (d != NULL) { FAIL("expected NULL diff"); wl_diff_free(d); return; }
+    PASS();
+}
+
+void test_plan_null_db(void) {
+    TEST("edge: wlite_diff with NULL db");
+    wlite_model *m = load_str("model T { table \"t\" field id integer { primary_key } }");
+    WlPlan *plan = NULL;
+    wlite_result rc = wlite_diff(NULL, m, &plan);
+    wlite_model_free(m);
+    if (rc == WLITE_OK) { FAIL("expected error for NULL db"); return; }
+    PASS();
+}
+
 /* ── Main ─────────────────────────────────────────────────────────────── */
 
 int main(void) {
@@ -288,6 +434,14 @@ int main(void) {
     test_no_fuzzy_rename();
     test_plan_step_count();
     test_plan_has_sql();
+    test_empty_model();
+    test_single_column_table();
+    test_many_columns();
+    test_rename_same_definition();
+    test_rename_and_type_change();
+    test_verify_null_args();
+    test_diff_null_schemas();
+    test_plan_null_db();
     fprintf(stderr, "\n%d/%d passed\n", tests_passed, tests_run);
     return tests_passed == tests_run ? 0 : 1;
 }

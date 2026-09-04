@@ -16,14 +16,24 @@
 
 static WlPlan *plan_new(size_t capacity) {
     WlPlan *p = calloc(1, sizeof(WlPlan));
-    if (p) p->steps = calloc(capacity, sizeof(WlPlanStep));
+    if (p) {
+        p->steps = calloc(capacity, sizeof(WlPlanStep));
+        if (!p->steps) { free(p); return NULL; }
+    }
     return p;
 }
 
 static void plan_add(WlPlan *p, WlPlanOp op, WlSafety safety,
                      const char *sql, const char *rollback,
                      const char *table, const char *detail, int non_atomic) {
+    if (!p || !p->steps) return;
     size_t n = p->step_count;
+    /* Grow if needed */
+    if (n > 0 && (n & (n-1)) == 0 && n >= 64) {
+        size_t new_cap = n * 2;
+        WlPlanStep *ne = realloc(p->steps, new_cap * sizeof(WlPlanStep));
+        if (ne) { p->steps = ne; memset(p->steps + n, 0, (new_cap - n) * sizeof(WlPlanStep)); }
+    }
     p->steps[n].op = op;
     p->steps[n].safety = safety;
     p->steps[n].sql = sql ? strdup(sql) : NULL;

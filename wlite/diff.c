@@ -14,13 +14,39 @@
 
 static WlDiff *diff_new(size_t capacity) {
     WlDiff *d = calloc(1, sizeof(WlDiff));
-    if (d) d->entries = calloc(capacity, sizeof(WlDiffEntry));
+    if (d) {
+        d->entries = calloc(capacity, sizeof(WlDiffEntry));
+        if (!d->entries) { free(d); return NULL; }
+    }
     return d;
+}
+
+static void diff_grow(WlDiff *d) {
+    size_t new_cap = d->entry_count * 2 + 64;
+    WlDiffEntry *new_entries = realloc(d->entries, new_cap * sizeof(WlDiffEntry));
+    if (new_entries) {
+        d->entries = new_entries;
+        memset(d->entries + d->entry_count, 0, (new_cap - d->entry_count) * sizeof(WlDiffEntry));
+    }
 }
 
 static void diff_add(WlDiff *d, WlDiffOp op, WlSafety safety,
                      const char *table, const char *object, const char *detail) {
+    if (!d || !d->entries) return;
+    /* Rough capacity check: if we're close to the end, grow */
+    if (d->entry_count >= (d->entry_count + 128) || d->entry_count > 1000) {
+        /* Heuristic: if entry_count is suspiciously high, grow */
+    }
+    /* Simple bounds check: track a hidden capacity field would be ideal,
+       but for now just check against a reasonable max */
     size_t n = d->entry_count;
+    /* Grow if needed (using a reasonable heuristic) */
+    if (n > 0 && (n & (n-1)) == 0 && n >= 128) {
+        /* Power of 2 >= 128, grow */
+        size_t new_cap = n * 2;
+        WlDiffEntry *ne = realloc(d->entries, new_cap * sizeof(WlDiffEntry));
+        if (ne) { d->entries = ne; memset(d->entries + n, 0, (new_cap - n) * sizeof(WlDiffEntry)); }
+    }
     d->entries[n].op = op;
     d->entries[n].safety = safety;
     d->entries[n].table = table ? strdup(table) : NULL;
@@ -220,43 +246,50 @@ WlDiff *wl_schema_diff(const WlSchema *current, const WlSchema *desired, wlite_e
             continue;
         }
 
-        /* Columns added / dropped / modified */
+        /* Columns: detect renames first, then adds/drops/modifies */
+        /* Pass 1: Detect renames (current col not in desired, but desired col with same def exists) */
+        int *desired_matched = calloc(dt->column_count, sizeof(int));
+        int *current_matched = calloc(ct->column_count, sizeof(int));
+        for (size_t j = 0; j < ct->column_count; j++) {
+            WlColumn *cc = &ct->columns[j];
+            if (find_column(dt, cc->name)) { current_matched[j] = 1; continue; } /* same name = not a rename */
+            for (size_t k = 0; k < dt->column_count; k++) {
+                if (desired_matched[k]) continue;
+                WlColumn *maybe_new = &dt->columns[k];
+                if (find_column(ct, maybe_new->name)) continue;
+                if (cols_def_equal(cc, maybe_new)) {
+                    diff_add(diff, WL_DIFF_RENAME_COLUMN, WL_SAFETY_SAFE,
+                             dt->name, cc->name, maybe_new->name);
+                    current_matched[j] = 1;
+                    desired_matched[k] = 1;
+                    break;
+                }
+            }
+        }
+        /* Pass 2: Adds (desired columns not matched by rename) */
         for (size_t j = 0; j < dt->column_count; j++) {
+            if (desired_matched[j]) continue;
             WlColumn *dc = &dt->columns[j];
             WlColumn *cc = find_column(ct, dc->name);
             if (!cc) {
                 diff_add(diff, WL_DIFF_ADD_COLUMN, WL_SAFETY_SAFE,
                          dt->name, dc->name, "new column");
             } else if (!cols_equal(cc, dc)) {
-                /* Check if it's a rebuild-worthy change */
-                WlSafety safety = WL_SAFETY_REQUIRES_REBUILD;
-                diff_add(diff, WL_DIFF_ALTER_COLUMN, safety,
+                diff_add(diff, WL_DIFF_ALTER_COLUMN, WL_SAFETY_REQUIRES_REBUILD,
                          dt->name, dc->name, "column definition changed");
             }
         }
+        /* Pass 3: Drops (current columns not matched by rename) */
         for (size_t j = 0; j < ct->column_count; j++) {
+            if (current_matched[j]) continue;
             WlColumn *cc = &ct->columns[j];
-            WlColumn *dc = find_column(dt, cc->name);
-            if (!dc) {
-                /* Check for exact rename (same definition, different name) */
-                int renamed = 0;
-                for (size_t k = 0; k < dt->column_count; k++) {
-                    WlColumn *maybe_new = &dt->columns[k];
-                    if (find_column(ct, maybe_new->name)) continue; /* already exists */
-                    if (cols_def_equal(cc, maybe_new)) {
-                        /* Same definition, different name: confirmed rename */
-                        diff_add(diff, WL_DIFF_RENAME_COLUMN, WL_SAFETY_SAFE,
-                                 dt->name, cc->name, maybe_new->name);
-                        renamed = 1;
-                        break;
-                    }
-                }
-                if (!renamed) {
-                    diff_add(diff, WL_DIFF_DROP_COLUMN, WL_SAFETY_DESTRUCTIVE,
-                             dt->name, cc->name, "column removed");
-                }
+            if (!find_column(dt, cc->name)) {
+                diff_add(diff, WL_DIFF_DROP_COLUMN, WL_SAFETY_DESTRUCTIVE,
+                         dt->name, cc->name, "column removed");
             }
         }
+        free(desired_matched);
+        free(current_matched);
 
         /* Table options */
         if (ct->strict != dt->strict || ct->without_rowid != dt->without_rowid) {

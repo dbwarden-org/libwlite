@@ -415,14 +415,31 @@ static int parse_model(Lexer *l, WlSchema *schema, wlite_error **err) {
                                 if (act.type == TOK_IDENT) {
                                     if (tolower(act.start[0]) == 'c') fk.on_delete = WL_FK_CASCADE;
                                     else if (tolower(act.start[0]) == 'r') fk.on_delete = WL_FK_RESTRICT;
-                                    else if (tolower(act.start[0]) == 's' && act.length > 4) fk.on_delete = WL_FK_SET_NULL;
+                                    else if (tolower(act.start[0]) == 's') {
+                                        /* Check for "set null" or "set default" */
+                                        Token next = peek_token(l);
+                                        if (next.type == TOK_IDENT && tolower(next.start[0]) == 'n')
+                                            fk.on_delete = WL_FK_SET_NULL;
+                                        else if (next.type == TOK_IDENT && tolower(next.start[0]) == 'd')
+                                            fk.on_delete = WL_FK_SET_DEFAULT;
+                                        else
+                                            fk.on_delete = WL_FK_SET_NULL; /* default for "set ..." */
+                                    }
                                 }
                             } else if (match_ident_ci(l, "update")) {
                                 Token act = next_token(l);
                                 if (act.type == TOK_IDENT) {
                                     if (tolower(act.start[0]) == 'c') fk.on_update = WL_FK_CASCADE;
                                     else if (tolower(act.start[0]) == 'r') fk.on_update = WL_FK_RESTRICT;
-                                    else if (tolower(act.start[0]) == 's' && act.length > 4) fk.on_update = WL_FK_SET_NULL;
+                                    else if (tolower(act.start[0]) == 's') {
+                                        Token next = peek_token(l);
+                                        if (next.type == TOK_IDENT && tolower(next.start[0]) == 'n')
+                                            fk.on_update = WL_FK_SET_NULL;
+                                        else if (next.type == TOK_IDENT && tolower(next.start[0]) == 'd')
+                                            fk.on_update = WL_FK_SET_DEFAULT;
+                                        else
+                                            fk.on_update = WL_FK_SET_NULL;
+                                    }
                                 }
                             }
                         } else break;
