@@ -170,7 +170,17 @@ static char *expect_string(Lexer *l, wlite_error **err) {
         return NULL;
     }
     /* strip quotes */
+    if (t.length < 2) {
+        if (err) { *err = calloc(1, sizeof(wlite_error)); (*err)->code = WLITE_ERR_SYNTAX;
+            (*err)->message = strdup("empty or unterminated string"); (*err)->line = t.line; }
+        return NULL;
+    }
     char *s = malloc(t.length - 1);
+    if (!s) {
+        if (err) { *err = calloc(1, sizeof(wlite_error)); (*err)->code = WLITE_OUT_OF_MEMORY;
+            (*err)->message = strdup("out of memory"); }
+        return NULL;
+    }
     memcpy(s, t.start + 1, t.length - 2);
     s[t.length - 2] = '\0';
     return s;
@@ -345,7 +355,7 @@ static int parse_model(Lexer *l, WlSchema *schema, wlite_error **err) {
         /* constraints */
         if (match_ident_ci(l, "primary_key")) {
             if (expect_token(l, TOK_LPAREN, err)) {
-                while (peek_token(l).type != TOK_RPAREN) {
+                while (peek_token(l).type != TOK_RPAREN && peek_token(l).type != TOK_EOF) {
                     char *col = expect_ident(l, err);
                     if (col) {
                         table.primary_key.columns = realloc(table.primary_key.columns,
@@ -361,7 +371,7 @@ static int parse_model(Lexer *l, WlSchema *schema, wlite_error **err) {
         if (match_ident_ci(l, "unique")) {
             if (expect_token(l, TOK_LPAREN, err)) {
                 WlUnique uq = {0};
-                while (peek_token(l).type != TOK_RPAREN) {
+                while (peek_token(l).type != TOK_RPAREN && peek_token(l).type != TOK_EOF) {
                     char *col = expect_ident(l, err);
                     if (col) {
                         uq.columns = realloc(uq.columns, (uq.column_count + 1) * sizeof(char *));
@@ -385,7 +395,7 @@ static int parse_model(Lexer *l, WlSchema *schema, wlite_error **err) {
         }
         if (match_ident_ci(l, "foreign_key")) {            if (expect_token(l, TOK_LPAREN, err)) {
                 WlForeignKey fk = {0};
-                while (peek_token(l).type != TOK_RPAREN) {
+                while (peek_token(l).type != TOK_RPAREN && peek_token(l).type != TOK_EOF) {
                     char *col = expect_ident(l, err);
                     if (col) {
                         fk.columns = realloc(fk.columns, (fk.column_count + 1) * sizeof(char *));
@@ -397,7 +407,7 @@ static int parse_model(Lexer *l, WlSchema *schema, wlite_error **err) {
                 if (match_ident_ci(l, "references")) {
                     fk.ref_table = expect_ident(l, err);
                     if (expect_token(l, TOK_LPAREN, err)) {
-                        while (peek_token(l).type != TOK_RPAREN) {
+                        while (peek_token(l).type != TOK_RPAREN && peek_token(l).type != TOK_EOF) {
                             char *col = expect_ident(l, err);
                             if (col) {
                                 fk.ref_columns = realloc(fk.ref_columns,
@@ -479,7 +489,7 @@ static int parse_index(Lexer *l, WlSchema *schema, wlite_error **err) {
     if (match_ident_ci(l, "on")) {
         idx.table = expect_ident(l, err);
         if (expect_token(l, TOK_LPAREN, err)) {
-            while (peek_token(l).type != TOK_RPAREN) {
+            while (peek_token(l).type != TOK_RPAREN && peek_token(l).type != TOK_EOF) {
                 Token t = peek_token(l);
                 if (t.type == TOK_LPAREN) {
                     next_token(l);
@@ -672,8 +682,17 @@ WlSchema *wl_schema_load(const char *path, wlite_error **error) {
         return NULL;
     }
     fseek(f, 0, SEEK_END); long size = ftell(f); fseek(f, 0, SEEK_SET);
+    if (size < 0) { fclose(f);
+        if (error) { *error = calloc(1, sizeof(wlite_error)); (*error)->code = WLITE_ERR_IO;
+            (*error)->message = strdup("cannot determine file size"); (*error)->object = strdup(path); }
+        return NULL;
+    }
     char *buf = malloc(size + 1);
-    if (!buf) { fclose(f); return NULL; }
+    if (!buf) { fclose(f);
+        if (error) { *error = calloc(1, sizeof(wlite_error)); (*error)->code = WLITE_OUT_OF_MEMORY;
+            (*error)->message = strdup("out of memory"); }
+        return NULL;
+    }
     fread(buf, 1, size, f); buf[size] = '\0'; fclose(f);
     WlSchema *schema = wl_schema_parse(buf, size, error);
     free(buf);

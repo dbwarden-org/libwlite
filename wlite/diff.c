@@ -33,19 +33,14 @@ static void diff_grow(WlDiff *d) {
 static void diff_add(WlDiff *d, WlDiffOp op, WlSafety safety,
                      const char *table, const char *object, const char *detail) {
     if (!d || !d->entries) return;
-    /* Rough capacity check: if we're close to the end, grow */
-    if (d->entry_count >= (d->entry_count + 128) || d->entry_count > 1000) {
-        /* Heuristic: if entry_count is suspiciously high, grow */
-    }
-    /* Simple bounds check: track a hidden capacity field would be ideal,
-       but for now just check against a reasonable max */
     size_t n = d->entry_count;
-    /* Grow if needed (using a reasonable heuristic) */
-    if (n > 0 && (n & (n-1)) == 0 && n >= 128) {
-        /* Power of 2 >= 128, grow */
+    /* Grow if at capacity (double the allocation) */
+    if (n > 0 && n >= 128 && (n & (n-1)) == 0) {
         size_t new_cap = n * 2;
         WlDiffEntry *ne = realloc(d->entries, new_cap * sizeof(WlDiffEntry));
-        if (ne) { d->entries = ne; memset(d->entries + n, 0, (new_cap - n) * sizeof(WlDiffEntry)); }
+        if (!ne) return; /* OOM: silently drop this entry */
+        d->entries = ne;
+        memset(d->entries + n, 0, (new_cap - n) * sizeof(WlDiffEntry));
     }
     d->entries[n].op = op;
     d->entries[n].safety = safety;

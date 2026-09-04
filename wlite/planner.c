@@ -32,7 +32,9 @@ static void plan_add(WlPlan *p, WlPlanOp op, WlSafety safety,
     if (n > 0 && (n & (n-1)) == 0 && n >= 64) {
         size_t new_cap = n * 2;
         WlPlanStep *ne = realloc(p->steps, new_cap * sizeof(WlPlanStep));
-        if (ne) { p->steps = ne; memset(p->steps + n, 0, (new_cap - n) * sizeof(WlPlanStep)); }
+        if (!ne) return; /* OOM: silently drop this step */
+        p->steps = ne;
+        memset(p->steps + n, 0, (new_cap - n) * sizeof(WlPlanStep));
     }
     p->steps[n].op = op;
     p->steps[n].safety = safety;
@@ -49,7 +51,9 @@ static char *sqlprintf(const char *fmt, ...) {
     va_start(args, fmt);
     int n = vsnprintf(NULL, 0, fmt, args);
     va_end(args);
+    if (n < 0) return NULL;
     char *buf = malloc(n + 1);
+    if (!buf) return NULL;
     va_start(args, fmt);
     vsnprintf(buf, n + 1, fmt, args);
     va_end(args);
