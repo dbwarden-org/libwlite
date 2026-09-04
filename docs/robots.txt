@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://docs.dbwarden.org/$repo/sitemap.xml
+
+search: yes
+ai-input: yes
+ai-train: yes
