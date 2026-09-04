@@ -1,0 +1,9 @@
+*.o
+*.pic.o
+*.a
+*.so
+*.dylib
+tests/test_wlite
+tests/test_edge
+tests/test_conformance
+tests/test_comprehensive
