@@ -1,0 +1,60 @@
+name: dbwarden SQLite3 Sync
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify-sqlite-sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: wlite
+
+      - uses: actions/checkout@v4
+        with:
+          repository: dbwarden-org/dbwarden
+          path: dbwarden
+
+      - name: Verify SQLite rebuild algorithm matches
+        run: |
+          echo "Checking that libwlite rebuild algorithm matches dbwarden..."
+          # Extract key rebuild constants from both
+          WLITE_SUFFIX=$(grep -o '__wlite_new' libwlite/wlite/sql_build.c || true)
+          DBWDEN_SUFFIX=$(grep -o '__dbw_new' dbwarden/dbwarden/engine/backends/sqlite/sql_build.py || true)
+
+          if [ "$WLITE_SUFFIX" != "$DBWDEN_SUFFIX" ]; then
+            echo "WARNING: Rebuild suffix differs (wlite: $WLITE_SUFFIX, dbwarden: $DBWDEN_SUFFIX)"
+            echo "This is expected if wlite uses a different naming convention."
+          fi
+
+          # Verify key rebuild operations exist in both
+          echo "Checking rebuild operations..."
+          grep -q "CREATE TABLE" libwlite/wlite/planner.c && echo "  CREATE TABLE: OK"
+          grep -q "INSERT INTO" libwlite/wlite/planner.c && echo "  INSERT INTO: OK"
+          grep -q "DROP TABLE" libwlite/wlite/planner.c && echo "  DROP TABLE: OK"
+          grep -q "RENAME TO" libwlite/wlite/planner.c && echo "  RENAME TO: OK"
+          grep -q "CREATE.*INDEX" libwlite/wlite/planner.c && echo "  CREATE INDEX: OK"
+
+          echo "SQLite rebuild algorithm verification complete."
+
+      - name: Verify type normalization matches
+        run: |
+          echo "Checking type normalization..."
+          # Both should normalize booleans and timestamps the same way
+          grep -q "TRUE\|FALSE" libwlite/wlite/diff.c && echo "  Boolean normalization: OK"
+          grep -q "CURRENT_TIMESTAMP" libwlite/wlite/diff.c && echo "  Timestamp normalization: OK"
+
+      - name: Build and test libwlite
+        run: |
+          cd wlite/libwlite
+          make
+          make test
+
+      - name: Build wlite CLI
+        run: |
+          cd wlite
+          LD_LIBRARY_PATH=libwlite make

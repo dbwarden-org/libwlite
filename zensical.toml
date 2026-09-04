@@ -1,0 +1,66 @@
+[project]
+site_name = "libwlite Documentation"
+site_description = "libwlite: A small C library for SQLite schema management, migrations, and queries."
+site_url = "https://docs.dbwarden.org/libwlite"
+docs_dir = "docs"
+site_dir = "site"
+
+copyright = "&copy; 2026 Emiliano Gandini Outeda"
+
+[project.theme]
+variant = "modern"
+
+font.text = "Ubuntu"
+font.code = "JetBrains Mono"
+
+features = [
+    "navigation.instant",
+    "navigation.tabs",
+    "navigation.top",
+    "navigation.footer",
+    "search.suggest",
+    "search.highlight",
+    "content.code.copy",
+    "toc.follow",
+]
+
+[[project.theme.palette]]
+scheme = "default"
+primary = "custom"
+accent = "custom"
+
+[[project.theme.palette]]
+scheme = "slate"
+primary = "custom"
+accent = "custom"
+
+[[project.extra.social]]
+icon = "fontawesome/brands/github"
+link = "https://github.com/dbwarden-org/libwlite"
+name = "libwlite on GitHub"
+
+[[project.nav]]
+Overview = [
+  {Overview = "index.md"},
+  {"Architecture" = "architecture.md"},
+]
+
+[[project.nav]]
+API = [
+  {"C API Reference" = "c-api.md"},
+]
+
+[[project.nav]]
+Reference = [
+  {"Grammar" = "grammar.md"},
+]
+
+[[project.markdown_extensions.tables]]
+[[project.markdown_extensions.admonition]]
+[[project.markdown_extensions.toc]]
+permalink = true
+[[project.markdown_extensions.pymdownx.highlight]]
+anchor_linenums = true
+[[project.markdown_extensions.pymdownx.superfences]]
+[[project.markdown_extensions.pymdownx.tabbed]]
+alternate_style = true
