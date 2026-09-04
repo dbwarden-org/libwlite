@@ -1,0 +1,14 @@
+{
+  "name": "libwlite",
+  "version": "0.2.0",
+  "description": "A small C library for SQLite schema management, migrations, and queries",
+  "homepage": "https://github.com/dbwarden-org/libwlite",
+  "license": "MIT",
+  "supports": "!(windows & static)",
+  "dependencies": [
+    {
+      "name": "sqlite3",
+      "version>=": "3.35.0"
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 [project]
 site_name = "libwlite Documentation"
 site_description = "libwlite: A small C library for SQLite schema management, migrations, and queries. Core runtime for wlite."
-site_url = "https://docs.dbwarden.org/libwlite"
+site_url = "https://libwlite.dbwarden.org"
 docs_dir = "docs"
 site_dir = "site"
 
@@ -64,7 +64,7 @@ Overview = [
 [project.markdown_extensions]
 "seoslug.contrib.zensical" = {
   canonical_host = "dbwarden.org",
-  public_base_url = "https://docs.dbwarden.org/libwlite/",
+  public_base_url = "https://libwlite.dbwarden.org/",
   site_name = "libwlite Documentation",
   title_template = "{title} - libwlite",
   publisher_name = "Emiliano Gandini Outeda",

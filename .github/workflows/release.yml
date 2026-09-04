@@ -1,0 +1,44 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            cc: gcc
+          - os: macos-latest
+            cc: clang
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: make CC=${{ matrix.cc }}
+      - name: Run tests
+        run: make test CC=${{ matrix.cc }}
+      - name: Package
+        run: |
+          mkdir -p pkg/include/wlite pkg/lib
+          cp include/wlite/wlite.h pkg/include/wlite/
+          cp libwlite.a pkg/lib/
+          cp libwlite.so* pkg/lib/
+          tar czf libwlite-${{ github.ref_name }}-${{ runner.os }}-$(uname -m).tar.gz -C pkg .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.os }}
+          path: libwlite-*.tar.gz
+
+  publish-release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: libwlite-*.tar.gz

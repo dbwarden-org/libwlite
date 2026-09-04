@@ -100,6 +100,17 @@ endif()
 # Install
 include(GNUInstallDirs)
 
+set(WLITE_TARGETS "")
+if(WLITE_BUILD_STATIC)
+    list(APPEND WLITE_TARGETS wlite_static)
+endif()
+if(WLITE_BUILD_SHARED)
+    list(APPEND WLITE_TARGETS wlite_shared)
+endif()
+if(WLITE_BUILD_CLI)
+    list(APPEND WLITE_TARGETS wlite-cli)
+endif()
+
 install(TARGETS
     ${WLITE_TARGETS}
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
