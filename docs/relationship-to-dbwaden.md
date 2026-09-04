@@ -346,7 +346,7 @@ users might not encounter.
 | Plugin system | Yes | No |
 | Async operation | Yes | No |
 | Seed management | Yes | No |
-| Schema snapshots | Yes | No |
+| Schema snapshots | Yes | Yes (wl_schema_inspect) |
 | Impact analysis | Yes | No |
 | Live database reverse-engineering | Yes | No |
 | CLI tool | Yes | Yes |
