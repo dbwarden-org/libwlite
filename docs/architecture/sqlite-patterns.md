@@ -50,33 +50,29 @@ These changes use SQLite's `ALTER TABLE` directly:
 A table rebuild generates this sequence:
 
 ```sql
--- 1. Disable foreign key checks
-PRAGMA foreign_keys = OFF;
-
--- 2. Create staging table with correct schema
-CREATE TABLE _staging_users (
+-- 1. Create staging table with correct schema
+CREATE TABLE users__wlite_new (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     email TEXT NOT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- 3. Copy data from old table
-INSERT INTO _staging_users (id, name, email, created_at)
+-- 2. Copy data from old table
+INSERT INTO users__wlite_new (id, name, email, created_at)
 SELECT id, name, email, created_at FROM users;
 
--- 4. Drop old table
+-- 3. Drop old table (takes indexes with it)
 DROP TABLE users;
 
--- 5. Rename staging to final name
-ALTER TABLE _staging_users RENAME TO users;
+-- 4. Rename staging to final name
+ALTER TABLE users__wlite_new RENAME TO users;
 
--- 6. Recreate indexes
+-- 5. Recreate indexes
 CREATE INDEX IF NOT EXISTS users_email ON users (email);
-
--- 7. Re-enable foreign key checks
-PRAGMA foreign_keys = ON;
 ```
+
+Note that the `CREATE TABLE` and `INSERT INTO ... SELECT` are separate statements. libwlite does not use SQLite's `CREATE TABLE ... AS SELECT` syntax because that syntax does not support constraints, defaults, or generated columns in the new table.
 
 ### Data preservation
 
@@ -95,16 +91,14 @@ These fallbacks are chosen to be safe and reversible. They do not violate any co
 
 ### Staging table naming
 
-The staging table name is derived from the original table name with a `_staging_` prefix. If the original table is `users`, the staging table is `_staging_users`. This prefix is short enough to avoid collisions with user-defined tables and long enough to be recognizable.
-
-If a table already starts with `_staging_`, the prefix is doubled to `_staging__staging_`. This is an edge case but it is handled correctly.
+The staging table name is derived from the original table name with a `__wlite_new` suffix. If the original table is `users`, the staging table is `users__wlite_new`. This suffix is short, unlikely to collide with user-defined tables, and clearly identifies the table as a temporary rebuild artifact.
 
 ### Column mapping during rebuild
 
 When copying data from the old table to the staging table, libwlite maps columns by name. If the old table has columns `(id, name, email)` and the new schema has `(id, name, email, created_at)`, the INSERT statement is:
 
 ```sql
-INSERT INTO _staging_users (id, name, email)
+INSERT INTO users__wlite_new (id, name, email)
 SELECT id, name, email FROM users;
 ```
 
@@ -128,21 +122,37 @@ libwlite collapses multiple rebuilds on the same table into a single rebuild. Th
 --   2. add field bio text
 
 -- Without collapse (2 rebuilds):
-CREATE TABLE _staging_users (...) AS SELECT ...;
-DROP TABLE users;
-ALTER TABLE _staging_users RENAME TO users;
-CREATE TABLE _staging_users (...) AS SELECT ...;
-DROP TABLE users;
-ALTER TABLE _staging_users RENAME TO users;
-
--- With collapse (1 rebuild):
-CREATE TABLE _staging_users (
+CREATE TABLE users__wlite_new (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
-    bio TEXT
-) AS SELECT id, name FROM users;
+    email TEXT NOT NULL
+);
+INSERT INTO users__wlite_new (id, name, email)
+SELECT id, name, email FROM users;
 DROP TABLE users;
-ALTER TABLE _staging_users RENAME TO users;
+ALTER TABLE users__wlite_new RENAME TO users;
+CREATE TABLE users__wlite_new (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL,
+    bio TEXT
+);
+INSERT INTO users__wlite_new (id, name, email, bio)
+SELECT id, name, email, NULL FROM users;
+DROP TABLE users;
+ALTER TABLE users__wlite_new RENAME TO users;
+
+-- With collapse (1 rebuild):
+CREATE TABLE users__wlite_new (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    email TEXT NOT NULL,
+    bio TEXT
+);
+INSERT INTO users__wlite_new (id, name, email, bio)
+SELECT id, name, email, NULL FROM users;
+DROP TABLE users;
+ALTER TABLE users__wlite_new RENAME TO users;
 ```
 
 ### When collapse does NOT apply
@@ -194,9 +204,10 @@ libwlite normalizes types before comparison so equivalent types do not trigger m
 -- Database:    age REAL
 
 -- libwlite sees a type change. Migration generated:
--- CREATE TABLE _staging (...) AS SELECT ...;
--- DROP TABLE ...;
--- ALTER TABLE _staging RENAME TO ...;
+-- CREATE TABLE users__wlite_new (...);
+-- INSERT INTO users__wlite_new (...) SELECT ... FROM users;
+-- DROP TABLE users;
+-- ALTER TABLE users__wlite_new RENAME TO users;
 ```
 
 ### Case sensitivity
@@ -225,9 +236,7 @@ Default values are compared semantically, not textually. These pairs are equival
 
 ### When defaults trigger rebuilds
 
-Changing a default value does NOT trigger a rebuild in most cases. SQLite supports `ALTER TABLE ... ALTER COLUMN ... SET DEFAULT` in recent versions. libwlite uses this when available.
-
-A rebuild is only triggered if the default change is combined with other changes that require a rebuild (type change, nullability change, etc.).
+Changing a default value does NOT trigger a rebuild by itself. However, if the default change is combined with other changes that require a rebuild (type change, nullability change, etc.), the new default is included in the rebuilt table definition.
 
 ### NULL defaults
 

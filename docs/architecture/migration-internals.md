@@ -35,10 +35,11 @@ When libwlite compares the model against the database, each difference is classi
 |----------------|---------|--------|
 | Additive | New column, new table | `ALTER TABLE ... ADD COLUMN` or `CREATE TABLE` |
 | Subtractive | Drop column, drop table | `ALTER TABLE ... DROP COLUMN` or `DROP TABLE` |
-| Alterable | Change default value | `ALTER COLUMN ... SET DEFAULT` (if supported) |
-| Rebuild | Change column type | Full table rebuild |
+| Rebuild | Change column type, change DEFAULT, change constraints | Full table rebuild |
 
 The classification is done by the diff engine. The planner uses these classifications to decide which SQL to generate.
+
+Note: there is no separate "Alterable" path for changing a column's DEFAULT value. SQLite does not support `ALTER COLUMN ... SET DEFAULT`, so any change to a column's default always triggers a full table rebuild.
 
 ### Step 2: Expand rebuilds
 
@@ -46,7 +47,7 @@ A table rebuild is expanded into a sequence of SQL statements:
 
 ```sql
 -- 1. Create staging table with correct schema
-CREATE TABLE _staging_users (
+CREATE TABLE users__wlite_new (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     email TEXT NOT NULL,
@@ -54,17 +55,24 @@ CREATE TABLE _staging_users (
 );
 
 -- 2. Copy data from old table
-INSERT INTO _staging_users (id, name, email)
-SELECT id, name, email FROM users;
+INSERT INTO users__wlite_new (id, name, email, created_at)
+SELECT id, name, email, created_at FROM users;
 
 -- 3. Drop old table
-DROP TABLE users;
+DROP TABLE IF EXISTS users;
 
 -- 4. Rename staging to final name
-ALTER TABLE _staging_users RENAME TO users;
+ALTER TABLE users__wlite_new RENAME TO users;
+
+-- 5. Recreate indexes
+CREATE INDEX IF NOT EXISTS users_email ON users (email);
 ```
 
-The staging table name is derived from the original table name with a `_staging_` prefix. This avoids collisions with other tables.
+The staging table name is derived from the original table name with a `__wlite_new` suffix. This avoids collisions with other tables and marks the table as temporary during migration.
+
+The planner generates a separate `CREATE TABLE` statement and `INSERT INTO ... SELECT` statement. It does not use the `CREATE TABLE ... AS SELECT` shorthand. This is intentional: the `CREATE TABLE` must define the full schema (constraints, defaults, collations), while `INSERT INTO ... SELECT` copies the data.
+
+The column list in the `INSERT INTO` is computed by intersecting the columns of the old and new table schemas. Columns that exist in both schemas are included, excluding generated columns (which SQLite computes automatically).
 
 ### Step 3: Plan ordering
 
@@ -85,15 +93,15 @@ Multiple rebuilds on the same table are collapsed into one. If you change both t
 ```
 Before collapse:
   ALTER TABLE users ADD COLUMN created_at ...;
-  ALTER TABLE users ALTER COLUMN name ...;  -- rebuild
   ALTER TABLE users ADD COLUMN bio ...;     -- another rebuild?
 
 After collapse:
   ALTER TABLE users ADD COLUMN created_at ...;
   -- single rebuild with all changes
-  CREATE TABLE _staging_users (...) AS SELECT ...;
-  DROP TABLE users;
-  ALTER TABLE _staging_users RENAME TO users;
+  CREATE TABLE users__wlite_new (...);
+  INSERT INTO users__wlite_new (...) SELECT ...;
+  DROP TABLE IF EXISTS users;
+  ALTER TABLE users__wlite_new RENAME TO users;
 ```
 
 The collapse happens during planning, after the diff is computed. The planner groups all rebuild-triggering changes for each table and produces a single rebuild sequence.
@@ -123,9 +131,10 @@ Indexes are rebuilt as part of the migration. If a table is rebuilt, its indexes
 
 ```sql
 -- Table rebuild
-CREATE TABLE _staging_users (...) AS SELECT ...;
-DROP TABLE users;
-ALTER TABLE _staging_users RENAME TO users;
+CREATE TABLE users__wlite_new (...);
+INSERT INTO users__wlite_new (...) SELECT ...;
+DROP TABLE IF EXISTS users;
+ALTER TABLE users__wlite_new RENAME TO users;
 
 -- Indexes recreated
 CREATE INDEX IF NOT EXISTS users_email ON users (email);
@@ -145,9 +154,10 @@ Every migration is wrapped in a transaction. If any step fails, the entire migra
 ```c
 // libwlite_migrate wraps everything in:
 BEGIN;
-  CREATE TABLE _staging_users (...) AS SELECT ...;
-  DROP TABLE users;
-  ALTER TABLE _staging_users RENAME TO users;
+  CREATE TABLE users__wlite_new (...);
+  INSERT INTO users__wlite_new (...) SELECT ...;
+  DROP TABLE IF EXISTS users;
+  ALTER TABLE users__wlite_new RENAME TO users;
   CREATE INDEX ...;
 COMMIT;
 -- If any step fails: ROLLBACK
@@ -155,11 +165,13 @@ COMMIT;
 
 The transaction ensures atomicity. Either all changes are applied or none are. There is no partial state.
 
+Every plan step also includes rollback SQL. For a rebuild, the rollback SQL reverses the operation by rebuilding the table back to its original schema. This means rollback is always possible without data loss.
+
 ## Checksums
 
-After a successful migration, libwlite computes a checksum of the schema state. This checksum is used by `wlite_check` to verify the database matches the model without re-introspecting the entire schema.
+After a successful migration, libwlite computes a checksum of the schema state. This checksum is used by `wl_schema_verify` to verify the database matches the model without re-introspecting the entire schema.
 
-The checksum is a SHA-256 hash of the normalized schema structure (table names, column names, types, constraints, defaults).
+The checksum is an FNV-1a hash of the normalized schema structure (table names, column names, types, constraints, defaults). FNV-1a is used because it is fast, has good distribution, and requires no external dependencies.
 
 The checksum is computed from the introspected schema after migration, not from the model. This ensures the checksum reflects the actual database state.
 
@@ -184,27 +196,48 @@ ALTER TABLE users ADD COLUMN bio TEXT;
 
 ```sql
 -- model changes: field age integer -> field age real
-CREATE TABLE _staging_users (
+CREATE TABLE users__wlite_new (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     age REAL
-) AS SELECT id, name, age FROM users;
-DROP TABLE users;
-ALTER TABLE _staging_users RENAME TO users;
+);
+INSERT INTO users__wlite_new (id, name, age)
+SELECT id, name, age FROM users;
+DROP TABLE IF EXISTS users;
+ALTER TABLE users__wlite_new RENAME TO users;
 ```
+
+### Changing a column DEFAULT
+
+```sql
+-- model changes: field role text default 'user' -> default 'member'
+CREATE TABLE users__wlite_new (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'member'
+);
+INSERT INTO users__wlite_new (id, name, role)
+SELECT id, name, role FROM users;
+DROP TABLE IF EXISTS users;
+ALTER TABLE users__wlite_new RENAME TO users;
+```
+
+SQLite does not support `ALTER COLUMN ... SET DEFAULT`, so this triggers a full table rebuild.
 
 ### Adding a NOT NULL column without DEFAULT
 
 ```sql
 -- model adds: field email text { not_null }
 -- SQLite cannot add NOT NULL without DEFAULT via ALTER TABLE
-CREATE TABLE _staging_users (
+CREATE TABLE users__wlite_new (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     email TEXT NOT NULL
-) AS SELECT id, name, COALESCE(email, '') FROM users;
-DROP TABLE users;
-ALTER TABLE _staging_users RENAME TO users;
+);
+INSERT INTO users__wlite_new (id, name, email)
+SELECT id, name, COALESCE(email, '') FROM users;
+DROP TABLE IF EXISTS users;
+ALTER TABLE users__wlite_new RENAME TO users;
 ```
 
 ### Dropping a table
@@ -225,14 +258,16 @@ CREATE INDEX IF NOT EXISTS users_email ON users (email);
 
 ```sql
 -- model changes: primary_key (id) -> primary_key (id, tenant_id)
-CREATE TABLE _staging_users (
+CREATE TABLE users__wlite_new (
     id INTEGER,
     tenant_id INTEGER,
     name TEXT NOT NULL,
     PRIMARY KEY (id, tenant_id)
-) AS SELECT id, tenant_id, name FROM users;
-DROP TABLE users;
-ALTER TABLE _staging_users RENAME TO users;
+);
+INSERT INTO users__wlite_new (id, tenant_id, name)
+SELECT id, tenant_id, name FROM users;
+DROP TABLE IF EXISTS users;
+ALTER TABLE users__wlite_new RENAME TO users;
 ```
 
 ### Adding a foreign key
@@ -240,25 +275,29 @@ ALTER TABLE _staging_users RENAME TO users;
 ```sql
 -- model adds: field org_id integer { references Organization.id }
 -- This requires a rebuild because SQLite cannot add foreign keys via ALTER TABLE
-CREATE TABLE _staging_users (
+CREATE TABLE users__wlite_new (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     org_id INTEGER REFERENCES Organization(id)
-) AS SELECT id, name, org_id FROM users;
-DROP TABLE users;
-ALTER TABLE _staging_users RENAME TO users;
+);
+INSERT INTO users__wlite_new (id, name, org_id)
+SELECT id, name, org_id FROM users;
+DROP TABLE IF EXISTS users;
+ALTER TABLE users__wlite_new RENAME TO users;
 ```
 
 ### Enabling STRICT mode
 
 ```sql
 -- model adds: strict
-CREATE TABLE _staging_users (
+CREATE TABLE users__wlite_new (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL
-) STRICT AS SELECT id, name FROM users;
-DROP TABLE users;
-ALTER TABLE _staging_users RENAME TO users;
+) STRICT;
+INSERT INTO users__wlite_new (id, name)
+SELECT id, name FROM users;
+DROP TABLE IF EXISTS users;
+ALTER TABLE users__wlite_new RENAME TO users;
 ```
 
 ## Edge cases
@@ -277,7 +316,7 @@ SQLite allows tables with no columns. libwlite handles this edge case. The stagi
 
 ### Views that reference rebuilt tables
 
-Views are not affected by table rebuilds. Views are defined by SQL queries, not by table structure. If a view references a table that is rebuilt, the view continue to work after the rebuild because the table name is preserved.
+Views are not affected by table rebuilds. Views are defined by SQL queries, not by table structure. If a view references a table that is rebuilt, the view continues to work after the rebuild because the table name is preserved.
 
 ### Triggers on rebuilt tables
 

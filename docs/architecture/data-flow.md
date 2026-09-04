@@ -9,7 +9,7 @@ This page walks through the complete pipeline from a `.wlite` model file to exec
 
 ## Stage 1: Parse
 
-The parser reads a `.wlite` file and produces an in-memory `WlSchema`. The schema contains tables, fields, constraints, indexes, views, and triggers.
+The parser reads a `.wlite` file and produces an in-memory `WlSchema`. The schema contains tables, columns, check constraints, unique constraints, foreign keys, indexes, views, and triggers.
 
 ```
 .wlite file  --->  parser.c  --->  WlSchema
@@ -28,19 +28,21 @@ The parser is a hand-written recursive descent parser. It does not use lex or ya
 
 ```c
 typedef struct WlSchema {
-    WlModelConfig config;       // model_config block (name, version)
-    WlTable *tables;            // array of tables
-    size_t table_count;         // number of tables
-    WlIndex *indexes;           // array of indexes
-    size_t index_count;         // number of indexes
-    WlView *views;              // array of views
-    size_t view_count;          // number of views
-    WlTrigger *triggers;        // array of triggers
-    size_t trigger_count;       // number of triggers
+    uint32_t version;            // schema version number
+    WlTable *tables;             // array of tables
+    size_t table_count;          // number of tables
+    WlIndex *indexes;            // array of indexes
+    size_t index_count;          // number of indexes
+    WlView *views;               // array of views
+    size_t view_count;           // number of views
+    WlTrigger *triggers;         // array of triggers
+    size_t trigger_count;        // number of triggers
+    char *model_name;            // model name string
+    int model_version;           // model version integer
 } WlSchema;
 ```
 
-Each `WlTable` contains an array of `WlField` (columns) and an array of `WlConstraint` (primary keys, unique constraints, foreign keys, check constraints).
+Each `WlTable` contains an array of `WlColumn` (columns), an array of `WlCheck` (check constraints), an array of `WlUnique` (unique constraints), and an array of `WlForeignKey` (foreign key constraints).
 
 ### Example
 
@@ -64,7 +66,7 @@ model User {
 The parser produces a `WlSchema` with:
 
 - 1 table: `users`
-- 2 fields: `id` (INTEGER, PK, AUTOINCREMENT), `name` (TEXT, NOT NULL)
+- 2 columns: `id` (INTEGER, PK, AUTOINCREMENT), `name` (TEXT, NOT NULL)
 - 0 indexes, 0 views, 0 triggers
 
 ### Parser error messages
@@ -136,7 +138,7 @@ CREATE TABLE users (
 The introspector produces a `WlSchema` with:
 
 - 1 table: `users`
-- 3 fields: `id` (INTEGER, PK, AUTOINCREMENT), `name` (TEXT, NOT NULL), `email` (TEXT, nullable)
+- 3 columns: `id` (INTEGER, PK, AUTOINCREMENT), `name` (TEXT, NOT NULL), `email` (TEXT, nullable)
 
 ## Stage 3: Diff
 
@@ -152,13 +154,24 @@ WlSchema (model)  +  WlSchema (db)  --->  diff.c  --->  WlDiff
 |-----------|---------|
 | `WL_DIFF_ADD_TABLE` | New table to create |
 | `WL_DIFF_DROP_TABLE` | Table to remove |
+| `WL_DIFF_RENAME_TABLE` | Table to rename |
 | `WL_DIFF_ADD_COLUMN` | New column to add |
 | `WL_DIFF_DROP_COLUMN` | Column to remove |
+| `WL_DIFF_RENAME_COLUMN` | Column to rename |
 | `WL_DIFF_ALTER_COLUMN` | Column type, nullability, default, or comment change |
 | `WL_DIFF_ADD_INDEX` | New index to create |
 | `WL_DIFF_DROP_INDEX` | Index to remove |
-| `WL_DIFF_ADD_CONSTRAINT` | New constraint to add |
-| `WL_DIFF_DROP_CONSTRAINT` | Constraint to remove |
+| `WL_DIFF_ALTER_INDEX` | Index definition change |
+| `WL_DIFF_ADD_CHECK` | New check constraint to add |
+| `WL_DIFF_DROP_CHECK` | Check constraint to remove |
+| `WL_DIFF_ADD_UNIQUE` | New unique constraint to add |
+| `WL_DIFF_DROP_UNIQUE` | Unique constraint to remove |
+| `WL_DIFF_ADD_FKEY` | New foreign key to add |
+| `WL_DIFF_DROP_FKEY` | Foreign key to remove |
+| `WL_DIFF_ALTER_TABLE_OPTIONS` | Table options change (STRICT, WITHOUT ROWID) |
+| `WL_DIFF_ALTER_VIEW` | View definition change |
+| `WL_DIFF_ALTER_TRIGGER` | Trigger definition change |
+| `WL_DIFF_REBUILD_TABLE` | Table requires full rebuild |
 
 ### Classification
 
@@ -188,9 +201,9 @@ If any property differs, the column is marked as altered. The planner decides wh
 Constraints are compared by their structural properties:
 
 - Primary keys: column list and sort order
-- Unique constraints: column list
-- Foreign keys: target table, target column, ON DELETE, ON UPDATE
-- Check constraints: expression text
+- Unique constraints (`WlUnique`): column list
+- Foreign keys (`WlForeignKey`): target table, target column, ON DELETE, ON UPDATE
+- Check constraints (`WlCheck`): expression text
 
 Any change to a constraint triggers a rebuild. There is no way to ALTER a constraint in SQLite without rebuilding the table.
 
@@ -222,12 +235,14 @@ WlDiff  --->  planner.c  --->  WlPlan
 
 ```c
 typedef struct WlPlan {
-    WlPlanStep *steps;      // array of SQL statements
-    size_t step_count;       // number of steps
+    WlPlanStep *steps;              // array of SQL statements
+    size_t step_count;              // number of steps
+    char *schema_hash_before;       // FNV-1a hash of schema before migration
+    char *schema_hash_after;        // FNV-1a hash of schema after migration
 } WlPlan;
 ```
 
-Each step contains a SQL string and a flag indicating whether it is part of a rebuild.
+Each `WlPlanStep` contains a SQL string, a rollback SQL string, the target table name, a detail description, a safety classification, and an `is_non_atomic` flag.
 
 ### Step types
 
@@ -235,17 +250,21 @@ Each step contains a SQL string and a flag indicating whether it is part of a re
 |-----------|---------|
 | `WL_PLAN_CREATE_TABLE` | Create a new table |
 | `WL_PLAN_DROP_TABLE` | Drop an existing table |
+| `WL_PLAN_RENAME_TABLE` | Rename a table |
 | `WL_PLAN_ADD_COLUMN` | Add a column to an existing table |
 | `WL_PLAN_DROP_COLUMN` | Remove a column from a table |
+| `WL_PLAN_RENAME_COLUMN` | Rename a column |
 | `WL_PLAN_ALTER_COLUMN` | Change a column property |
-| `WL_PLAN_REBUILD` | Part of a table rebuild sequence |
+| `WL_PLAN_REBUILD_TABLE` | Part of a table rebuild sequence |
 | `WL_PLAN_CREATE_INDEX` | Create a new index |
 | `WL_PLAN_DROP_INDEX` | Drop an existing index |
-| `WL_PLAN_CREATE_VIEW` | Create a view |
-| `WL_PLAN_DROP_VIEW` | Drop a view |
-| `WL_PLAN_CREATE_TRIGGER` | Create a trigger |
-| `WL_PLAN_DROP_TRIGGER` | Drop a trigger |
-| `WL_PLAN_PRAGMA` | Execute a PRAGMA (e.g., foreign_keys OFF) |
+| `WL_PLAN_ADD_CHECK` | Add a check constraint (via rebuild) |
+| `WL_PLAN_DROP_CHECK` | Drop a check constraint (via rebuild) |
+| `WL_PLAN_ADD_UNIQUE` | Add a unique constraint (via rebuild) |
+| `WL_PLAN_DROP_UNIQUE` | Drop a unique constraint (via rebuild) |
+| `WL_PLAN_ADD_FKEY` | Add a foreign key (via rebuild) |
+| `WL_PLAN_DROP_FKEY` | Drop a foreign key (via rebuild) |
+| `WL_PLAN_CUSTOM_SQL` | Execute custom SQL |
 
 ### Example
 
@@ -275,7 +294,7 @@ WlPlan  --->  migrate.c  --->  SQL executed, checksum recorded
 
 ### Checksums
 
-After migration, libwlite computes a SHA-256 hash of the schema state. This hash is stored and used by `wlite_check` to verify that the database matches the model without re-introspecting.
+After migration, libwlite computes an FNV-1a hash of the schema state. This hash is stored in the plan's `schema_hash_after` field and is used by `wl_schema_verify` to verify that the database matches the model without re-introspecting.
 
 ### Error handling
 
@@ -286,15 +305,14 @@ If any step fails, the entire migration is rolled back. The error includes the f
 You can call `wlite_diff` instead of `wlite_migrate` to see the plan without executing it. This is useful for reviewing changes before applying them.
 
 ```c
-wlite_plan *plan = NULL;
+WlPlan *plan = NULL;
 wlite_result r = wlite_diff(db, model, &plan);
 if (r == WLITE_OK) {
     for (size_t i = 0; i < wlite_plan_count(plan); i++) {
-        const wlite_plan_step *step = wlite_plan_step_at(plan, i);
-        printf("%s\n", wlite_plan_step_sql(step));
+        printf("%s\n", plan->steps[i].sql);
     }
 }
-wlite_plan_free(plan);
+wl_plan_free(plan);
 ```
 
 ## Complete example
@@ -314,11 +332,11 @@ int main(void) {
     wlite_migrate(db, model);
 
     // Or just preview (stages 2-4 only)
-    wlite_plan *plan = NULL;
+    WlPlan *plan = NULL;
     wlite_diff(db, model, &plan);
     printf("Migration has %zu steps\n", wlite_plan_count(plan));
 
-    wlite_plan_free(plan);
+    wl_plan_free(plan);
     wlite_close(db);
     wlite_model_free(model);
     return 0;
@@ -330,10 +348,11 @@ int main(void) {
 Every stage can return an error. The error codes are documented in [Memory and Errors](memory-and-errors.md). The most common errors are:
 
 - `WLITE_NOT_FOUND`: the model file or database does not exist
-- `WLITE_CORRUPT`: the model file has syntax errors or the database is corrupt
-- `WLITE_ERROR`: a SQL execution failed during migration
+- `WLITE_MODEL_ERROR`: the model file has syntax errors
+- `WLITE_SQLITE_ERROR`: a SQL execution failed during migration
+- `WLITE_ERROR`: a generic error occurred
 
-When `wlite_migrate_with_error` is used, the error object includes the failing SQL statement and the SQLite error message. This makes debugging straightforward.
+When `wlite_migrate` is used with error reporting, the error object includes the failing SQL statement and the SQLite error message. This makes debugging straightforward.
 
 ## Performance characteristics
 

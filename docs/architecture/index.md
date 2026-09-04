@@ -99,7 +99,6 @@ These cases are rare in small projects but common in production schemas. libwlit
 libwlite is designed to be small:
 
 - Single C library, approximately 12 source files
-- No dynamic memory allocation for schema operations (uses caller-provided buffers)
 - Compiles in under a second on modern hardware
 - The static library is under 200KB
 
@@ -114,45 +113,91 @@ The public API is split into several categories. Each category maps to a module 
 Model functions load and query `.wlite` files. A model is the parsed representation of your schema definition.
 
 ```c
-wlite_result wlite_model_load(const char *source, size_t length, wlite_model **model);
-wlite_result wlite_model_load_file(const char *path, wlite_model **model);
-wlite_result wlite_model_free(wlite_model *model);
+wlite_result wlite_model_load_file(const char *path, wlite_model **out);
+wlite_result wlite_model_load_memory(const void *data, size_t size, wlite_model **out);
+wlite_result wlite_model_load_compiled(const void *data, size_t size, wlite_model **out);
+void wlite_model_free(wlite_model *model);
 ```
 
-`wlite_model_load` accepts raw DSL text. `wlite_model_load_file` reads from a file path. Both produce an owned `wlite_model` that the caller must free with `wlite_model_free`.
+`wlite_model_load_file` reads from a file path. `wlite_model_load_memory` accepts raw DSL text in a buffer. `wlite_model_load_compiled` loads a pre-compiled binary model. All three produce an owned `wlite_model` that the caller must free with `wlite_model_free`.
 
 ### Database functions
 
-Database functions open and close SQLite connections. libwlite does not create a database object; it wraps the existing `sqlite3*` handle.
+Database functions open and close SQLite connections.
 
 ```c
-wlite_result wlite_open(const char *path, wlite_db **db);
-wlite_result wlite_close(wlite_db *db);
+wlite_result wlite_open(const char *path, wlite_db **out);
+wlite_result wlite_open_ex(const char *path, const wlite_open_options *options, wlite_db **out);
+void wlite_close(wlite_db *db);
 ```
 
-`wlite_open` creates a new `wlite_db` that wraps a SQLite connection. `wlite_close` closes the connection and frees the wrapper.
+`wlite_open` creates a new `wlite_db` that wraps a SQLite connection. `wlite_open_ex` accepts additional options (read-only, create, foreign keys, busy timeout). `wlite_close` closes the connection and frees the wrapper.
 
 ### Migration functions
 
 Migration functions compare a model against a database and produce or execute SQL.
 
 ```c
-wlite_result wlite_diff(wlite_db *db, wlite_model *model, wlite_plan **plan);
-wlite_result wlite_migrate(wlite_db *db, wlite_model *model);
-wlite_result wlite_migrate_with_error(wlite_db *db, wlite_model *model, wlite_error **error);
+wlite_result wlite_diff(wlite_db *db, const wlite_model *model, WlPlan **out_plan);
+wlite_result wlite_migrate(wlite_db *db, const wlite_model *model);
+wlite_result wl_apply_plan(wlite_db *db, const WlPlan *plan, wlite_error **error);
+wlite_result wl_rollback_last(wlite_db *db, wlite_error **error);
+wlite_result wl_schema_verify(wlite_db *db, const WlSchema *expected, WlDiff **difference, wlite_error **error);
 ```
 
-`wlite_diff` produces a plan without executing it. `wlite_migrate` executes the plan and records checksums. `wlite_migrate_with_error` does the same but returns detailed error information on failure.
+`wlite_diff` produces a plan without executing it. `wlite_migrate` executes the plan and records checksums. `wl_apply_plan` executes a previously computed plan with detailed error output. `wl_rollback_last` rolls back the most recent migration. `wl_schema_verify` compares the live database against an expected schema.
 
 ### Query functions
 
 Query functions execute SQL and return results. They follow a prepare-step-finalize pattern similar to SQLite's own API.
 
 ```c
-wlite_result wlite_prepare(wlite_db *db, const char *sql, wlite_stmt **stmt);
+wlite_result wlite_prepare(wlite_db *db, const char *sql, wlite_stmt **out);
 wlite_result wlite_step(wlite_stmt *stmt);
-wlite_result wlite_finalize(wlite_stmt *stmt);
-wlite_result wlite_bind(wlite_stmt *stmt, int index, int type, const void *value);
+void wlite_stmt_reset(wlite_stmt *stmt);
+void wlite_stmt_finalize(wlite_stmt *stmt);
+```
+
+Parameter binding uses type-specific functions:
+
+```c
+wlite_result wlite_bind_null(wlite_stmt *stmt, int index);
+wlite_result wlite_bind_int64(wlite_stmt *stmt, int index, int64_t value);
+wlite_result wlite_bind_double(wlite_stmt *stmt, int index, double value);
+wlite_result wlite_bind_text(wlite_stmt *stmt, int index, const char *value);
+wlite_result wlite_bind_text_n(wlite_stmt *stmt, int index, const char *value, size_t length);
+wlite_result wlite_bind_blob(wlite_stmt *stmt, int index, const void *data, size_t size);
+```
+
+Column access reads values from a stepped statement:
+
+```c
+int wlite_column_count(wlite_stmt *stmt);
+const char *wlite_column_name(wlite_stmt *stmt, int column);
+wlite_value_type wlite_column_type(wlite_stmt *stmt, int column);
+int64_t wlite_column_int64(wlite_stmt *stmt, int column);
+double wlite_column_double(wlite_stmt *stmt, int column);
+const char *wlite_column_text(wlite_stmt *stmt, int column);
+const void *wlite_column_blob(wlite_stmt *stmt, int column);
+size_t wlite_column_bytes(wlite_stmt *stmt, int column);
+```
+
+### Record functions
+
+Record functions provide generic row access from a stepped statement.
+
+```c
+wlite_record *wlite_record_from_stmt(wlite_stmt *stmt);
+void wlite_record_free(wlite_record *record);
+int wlite_record_column_count(const wlite_record *record);
+const char *wlite_record_column_name(const wlite_record *record, int index);
+wlite_value_type wlite_record_column_type(const wlite_record *record, int index);
+int wlite_record_find(const wlite_record *record, const char *name);
+int64_t wlite_record_int64(const wlite_record *record, int index);
+double wlite_record_double(const wlite_record *record, int index);
+const char *wlite_record_text(const wlite_record *record, int index);
+const void *wlite_record_blob(const wlite_record *record, int index);
+size_t wlite_record_blob_bytes(const wlite_record *record, int index);
 ```
 
 ### Transaction functions
@@ -160,10 +205,18 @@ wlite_result wlite_bind(wlite_stmt *stmt, int index, int type, const void *value
 Transaction functions provide transaction and savepoint management.
 
 ```c
-wlite_result wlite_tx_begin(wlite_db *db, wlite_tx **tx);
-wlite_result wlite_tx_commit(wlite_tx *tx);
-wlite_result wlite_tx_rollback(wlite_tx *tx);
-wlite_result wlite_tx_free(wlite_tx *tx);
+wlite_result wlite_begin(wlite_db *db, wlite_tx **out);
+wlite_result wlite_commit(wlite_tx *tx);
+wlite_result wlite_rollback(wlite_tx *tx);
+void wlite_tx_free(wlite_tx *tx);
+```
+
+Savepoints nest within a transaction:
+
+```c
+wlite_result wlite_savepoint(wlite_tx *tx, const char *name);
+wlite_result wlite_release(wlite_tx *tx, const char *name);
+wlite_result wlite_rollback_to(wlite_tx *tx, const char *name);
 ```
 
 ### Plan functions
@@ -171,9 +224,88 @@ wlite_result wlite_tx_free(wlite_tx *tx);
 Plan functions inspect and free migration plans.
 
 ```c
-size_t wlite_plan_count(const wlite_plan *plan);
-const wlite_plan_step *wlite_plan_step_at(const wlite_plan *plan, size_t index);
-wlite_result wlite_plan_free(wlite_plan *plan);
+size_t wlite_plan_count(const WlPlan *plan);
+void wl_plan_free(WlPlan *plan);
+```
+
+### Schema inspection functions
+
+Schema functions parse, inspect, and introspect schemas.
+
+```c
+WlSchema *wl_schema_parse(const char *source, size_t length, wlite_error **error);
+WlSchema *wl_schema_load(const char *path, wlite_error **error);
+WlSchema *wl_schema_introspect(struct sqlite3 *db, wlite_error **error);
+WlSchema *wl_schema_inspect(wlite_db *db, wlite_error **error);
+void wl_schema_free(WlSchema *schema);
+const char *wl_schema_model_name(const WlSchema *schema);
+int wl_schema_model_version(const WlSchema *schema);
+```
+
+Schema hashing and serialization:
+
+```c
+char *wl_schema_hash(const WlSchema *schema);
+int wl_schema_write_json(const WlSchema *schema, wlite_writer *w, wlite_error **error);
+int wl_schema_write_dsl(const WlSchema *schema, wlite_writer *w, wlite_error **error);
+```
+
+### Model introspection functions
+
+These functions query the structure of a loaded model.
+
+```c
+size_t wlite_model_table_count(const wlite_model *model);
+const wlite_table *wlite_model_table_at(const wlite_model *model, size_t index);
+const wlite_table *wlite_model_table(const wlite_model *model, const char *name);
+const char *wlite_table_name(const wlite_table *table);
+size_t wlite_table_field_count(const wlite_table *table);
+const wlite_field *wlite_table_field_at(const wlite_table *table, size_t index);
+const wlite_field *wlite_table_field(const wlite_table *table, const char *name);
+const char *wlite_table_sql_name(const wlite_table *table);
+```
+
+Field (column) introspection:
+
+```c
+const char *wlite_field_name(const wlite_field *field);
+wlite_col_type wlite_field_type(const wlite_field *field);
+unsigned wlite_field_flags(const wlite_field *field);
+int wlite_field_is_nullable(const wlite_field *field);
+int wlite_field_is_primary_key(const wlite_field *field);
+int wlite_field_is_unique(const wlite_field *field);
+int wlite_field_is_autoincrement(const wlite_field *field);
+```
+
+### Model validation
+
+```c
+wlite_result wlite_model_validate(const wlite_model *model);
+```
+
+### Model compilation
+
+```c
+int wl_model_compile(const WlSchema *schema, const char *path);
+WlSchema *wl_model_load_compiled_raw(const void *data, size_t size);
+```
+
+### Error handling
+
+```c
+const char *wlite_strerror(wlite_result result);
+void wlite_error_free(wlite_error *err);
+```
+
+### Utility functions
+
+```c
+int wlite_abi_version(void);
+const char *wlite_version(void);
+wlite_result wlite_execute(wlite_db *db, const char *sql, int64_t *rows_affected);
+char *wlite_strdup(const char *s);
+void wlite_free(void *p);
+void wl_sqlite_capabilities(struct sqlite3 *db, wlite_sqlite_caps *caps);
 ```
 
 ## Module details
@@ -273,17 +405,17 @@ libwlite objects follow specific thread safety rules. Models are immutable after
 
 ## Error model
 
-Every function returns a `wlite_result` code. Zero means success. Non-zero means error. The `wlite_strerror` function converts codes to human-readable messages. For detailed error information (the failing SQL, the SQLite error message), use the `_with_error` variants. See [Memory and Errors](memory-and-errors.md) for the full error code table.
+Every function returns a `wlite_result` code. Zero means success. Non-zero means error. The `wlite_strerror` function converts codes to human-readable messages. For detailed error information (the failing SQL, the SQLite error message), use functions that accept a `wlite_error**` out-parameter. See [Memory and Errors](memory-and-errors.md) for the full error code table.
 
 ## Naming conventions
 
 libwlite follows consistent naming conventions:
 
-- Public types: `wlite_` prefix with snake_case (e.g., `wlite_model`, `wlite_plan`)
+- Public types: `wlite_` prefix with snake_case (e.g., `wlite_model`, `wlite_db`)
 - Public functions: `wlite_` prefix with snake_case (e.g., `wlite_open`, `wlite_migrate`)
 - Constants: `WLITE_` prefix with SCREAMING_SNAKE_CASE (e.g., `WLITE_OK`, `WLITE_ERROR`)
 - Internal types: `Wl` prefix with PascalCase (e.g., `WlSchema`, `WlDiff`)
-- Internal functions: `wl_` prefix with snake_case (e.g., `wl_diff_compare`)
+- Internal functions: `wl_` prefix with snake_case (e.g., `wl_plan_migration`, `wl_schema_hash`)
 
 ## Compatibility
 

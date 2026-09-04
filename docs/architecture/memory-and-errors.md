@@ -23,7 +23,7 @@ These are allocated by libwlite and must be freed by the caller:
 | `wlite_model` | `wlite_model_free(model)` | Frees all tables, fields, indexes |
 | `wlite_stmt` | `wlite_stmt_finalize(stmt)` | Finalizes the prepared statement |
 | `wlite_tx` | `wlite_tx_free(tx)` | Frees the transaction handle |
-| `wlite_plan` | `wlite_plan_free(plan)` | Frees the migration plan |
+| `WlPlan` | `wl_plan_free(plan)` | Frees the migration plan |
 | `wlite_error` | `wlite_error_free(err)` | Frees the error object |
 
 ### Borrowed objects
@@ -130,13 +130,14 @@ if (r != WLITE_OK) {
 
 ### Error objects
 
-For detailed error information, libwlite populates a `wlite_error` struct directly. Access its fields:
+For detailed error information, use `wl_schema_verify` or `wl_plan_migration` which accept an `wlite_error**` parameter:
 
 ```c
 wlite_error *err = NULL;
-wlite_result r = wlite_migrate(db, model, &err);
+WlDiff *diff = NULL;
+wlite_result r = wl_schema_verify(db, expected, &diff, &err);
 if (r != WLITE_OK) {
-    fprintf(stderr, "Migration failed: %s\n", wlite_strerror(r));
+    fprintf(stderr, "Verify failed: %s\n", wlite_strerror(r));
     if (err) {
         fprintf(stderr, "Code: %d\n", err->code);
         fprintf(stderr, "Message: %s\n", err->message);
@@ -243,59 +244,6 @@ Transactions belong to a database connection. Do not share a `wlite_tx` across t
 | `wlite_table` | Yes | Borrowed from model, immutable |
 | `wlite_field` | Yes | Borrowed from model, immutable |
 
-## Memory allocation
-
-### Default allocator
-
-libwlite uses the C standard library allocator (`malloc`, `realloc`, `free`) by default.
-
-### Custom allocator
-
-You can provide a custom allocator by calling `wlite_set_allocator` before any other function:
-
-```c
-void *my_alloc(size_t size) {
-    return my_custom_malloc(size);
-}
-
-void *my_realloc(void *ptr, size_t size) {
-    return my_custom_realloc(ptr, size);
-}
-
-void my_free(void *ptr) {
-    my_custom_free(ptr);
-}
-
-int main(void) {
-    wlite_set_allocator(my_alloc, my_realloc, my_free);
-    // ... use libwlite
-}
-```
-
-This is useful for embedded systems, games, or applications with custom memory pools.
-
-### Memory reporting
-
-Use `wlite_memory_usage` to check how much memory libwlite is currently using:
-
-```c
-size_t current, peak;
-wlite_memory_usage(&current, &peak);
-printf("Current: %zu bytes, Peak: %zu bytes\n", current, peak);
-```
-
-### Buffer-based operations
-
-For schema operations (parsing, introspecting, diffing, planning), libwlite can use caller-provided buffers instead of allocating memory. This is useful for embedded systems with limited heap.
-
-```c
-char buffer[4096];
-WlSchema schema;
-wlite_result r = wlite_parse_buffer(source, length, buffer, sizeof(buffer), &schema);
-```
-
-When using buffer-based operations, the schema is valid only while the buffer is valid. The buffer must remain alive for the entire lifetime of the schema.
-
 ## Cleanup patterns
 
 ### RAII in C
@@ -340,6 +288,36 @@ wlite_close(db);
 wlite_model_free(model);
 ```
 
+### goto-based cleanup
+
+A common C pattern uses `goto` for centralized cleanup. This avoids duplicating free calls in every error branch:
+
+```c
+wlite_model *model = NULL;
+wlite_db *db = NULL;
+wlite_stmt *stmt = NULL;
+wlite_result r;
+
+r = wlite_model_load_file("schema.wlite", &model);
+if (r != WLITE_OK) goto done;
+
+r = wlite_open("app.db", &db);
+if (r != WLITE_OK) goto done;
+
+r = wlite_prepare(db, "SELECT * FROM users", &stmt);
+if (r != WLITE_OK) goto done;
+
+// ... use stmt ...
+
+done:
+    if (stmt) wlite_stmt_finalize(stmt);
+    if (db) wlite_close(db);
+    if (model) wlite_model_free(model);
+    return r;
+```
+
+This pattern scales well when many resources must be cleaned up and keeps the error-handling path in one place.
+
 ## Summary
 
-libwlite follows simple ownership rules: allocated objects must be freed, borrowed objects must not. Error codes are returned by every function. Models are thread-safe, connections are not. Custom allocators are supported for embedded use. The memory model is designed to be predictable and easy to integrate with any language's memory management.
+libwlite follows simple ownership rules: allocated objects must be freed, borrowed objects must not. Error codes are returned by every function. Models are thread-safe, connections are not. The memory model is designed to be predictable and easy to integrate with any language's memory management.

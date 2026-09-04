@@ -41,17 +41,40 @@ if (rc != WLITE_OK) {
 ```c
 const char *source = "model User { ... }";
 wlite_model *model = NULL;
-wlite_result rc = wlite_model_load(source, strlen(source), &model);
+wlite_result rc = wlite_model_load_memory(source, strlen(source), &model);
+if (rc != WLITE_OK) {
+    fprintf(stderr, "failed to load model from memory: %d\n", rc);
+    return EXIT_FAILURE;
+}
 ```
+
+`wlite_model_load_memory` takes a pointer to the source text and its length.
+It parses the model definition in memory without touching the filesystem.
 
 ### From compiled .wlitem
 
 ```c
+/* Read the compiled file into a buffer first */
+FILE *f = fopen("schema.wlitem", "rb");
+fseek(f, 0, SEEK_END);
+size_t size = (size_t)ftell(f);
+fseek(f, 0, SEEK_SET);
+void *data = malloc(size);
+fread(data, 1, size, f);
+fclose(f);
+
 wlite_model *model = NULL;
-wlite_result rc = wlite_model_load_compiled("schema.wlitem", &model);
+wlite_result rc = wlite_model_load_compiled(data, size, &model);
+if (rc != WLITE_OK) {
+    fprintf(stderr, "failed to load compiled model: %d\n", rc);
+    free(data);
+    return EXIT_FAILURE;
+}
+free(data);
 ```
 
-The compiled form skips parsing entirely. See
+The compiled form skips parsing entirely. `wlite_model_load_compiled` takes a
+pointer to the raw binary data and its size, not a file path. See
 [Model Compilation](#model-compilation) for details.
 
 ## Opening a database
@@ -78,11 +101,13 @@ state.
 
 ### Programmatic inspection
 
+Use `wl_schema_inspect` to read the live schema from an open database handle:
+
 ```c
 wlite_error *error = NULL;
-WlSchema *live = wl_schema_introspect(db->sqlite, &error);
+WlSchema *live = wl_schema_inspect(db, &error);
 if (!live) {
-    fprintf(stderr, "introspection failed: %s\n", error->message);
+    fprintf(stderr, "inspection failed: %s\n", error->message);
     wlite_error_free(error);
     wlite_close(db);
     wlite_model_free(model);
@@ -90,7 +115,10 @@ if (!live) {
 }
 ```
 
-The introspected schema is a full `WlSchema` with tables, columns, indexes,
+The `db` parameter is the opaque `wlite_db *` handle returned by `wlite_open`.
+You do not need to access any internal fields of the database handle.
+
+The inspected schema is a full `WlSchema` with tables, columns, indexes,
 foreign keys, and constraints. It is the same data structure used for parsed
 models.
 
@@ -106,15 +134,25 @@ For each table:
 - UNIQUE constraints
 - Indexes (including partial and composite indexes)
 
-The introspection is a point-in-time snapshot. Changes to the database after
-introspection are not reflected.
+The inspection is a point-in-time snapshot. Changes to the database after
+inspection are not reflected.
 
 ## Schema diffing
 
 Compare the live schema against the model to find differences:
 
 ```c
-WlDiff *diff = wl_schema_diff(live, model->schema, &error);
+WlDiff *diff = wl_schema_diff(live, desired, &error);
+```
+
+Both arguments are `const WlSchema *`. The `live` schema comes from
+`wl_schema_inspect`. The `desired` schema can come from `wl_schema_parse` or
+`wl_schema_load`, or you can use the single-call `wlite_diff` helper that
+accepts a `wlite_model` directly:
+
+```c
+WlPlan *plan = NULL;
+wlite_result rc = wlite_diff(db, model, &plan);
 ```
 
 ### Inspecting the diff
@@ -126,7 +164,8 @@ if (diff->entry_count == 0) {
     printf("Found %zu differences\n", diff->entry_count);
     for (size_t i = 0; i < diff->entry_count; i++) {
         WlDiffEntry *entry = &diff->entries[i];
-        printf("  %s: %s.%s\n", entry->action, entry->table, entry->column);
+        printf("  op=%d table=%s object=%s\n",
+            entry->op, entry->table, entry->object);
     }
 }
 ```
@@ -135,9 +174,10 @@ if (diff->entry_count == 0) {
 
 Each `WlDiffEntry` contains:
 
-- `action`: What changed (add, drop, alter, rebuild)
+- `op`: The operation type (`WlDiffOp` enum value)
+- `safety`: Safety classification of the operation
 - `table`: Table name
-- `column`: Column name (NULL for table-level changes)
+- `object`: Object name (column, index, etc.)
 - `detail`: Description of the change
 
 The diff is a lightweight structure. It does not own the schemas it references.
@@ -147,7 +187,15 @@ The diff is a lightweight structure. It does not own the schemas it references.
 Convert the diff into an ordered sequence of SQL statements:
 
 ```c
-WlPlan *plan = wl_plan_migration(live, model->schema, &error);
+WlPlan *plan = wl_plan_migration(current, desired, &error);
+```
+
+Both arguments are `const WlSchema *`. You can also use `wlite_diff` to get
+a plan directly from a model:
+
+```c
+WlPlan *plan = NULL;
+wlite_result rc = wlite_diff(db, model, &plan);
 ```
 
 ### Inspecting the plan
@@ -179,15 +227,13 @@ introspection, diffing, planning, and execution:
 wlite_result rc = wlite_migrate(db, model);
 ```
 
-This is equivalent to:
+`wlite_migrate` takes the database handle and the model. It performs
+schema inspection, diffs against the model, plans the migration, and
+applies the plan — all in one call.
 
-```c
-WlSchema *live = wl_schema_introspect(db->sqlite, NULL);
-WlPlan *plan = wl_plan_migration(live, model->schema, NULL);
-wl_apply_plan(db, plan, NULL);
-```
-
-But with proper error handling and resource cleanup.
+If the migration fails, `wlite_migrate` returns a non-`WLITE_OK` result
+code. You can use `wl_schema_verify` afterward to check what the current
+state is.
 
 ## Schema verification
 
@@ -195,7 +241,7 @@ Verify that the database schema matches the model without modifying anything:
 
 ```c
 WlDiff *difference = NULL;
-wlite_result rc = wl_schema_verify(db, model->schema, &difference, &error);
+wlite_result rc = wl_schema_verify(db, expected, &difference, &error);
 
 if (rc == WLITE_OK) {
     printf("Schema matches\n");
@@ -205,8 +251,9 @@ if (rc == WLITE_OK) {
 }
 ```
 
-`wl_schema_verify` is read-only. It does not modify the database. It returns
-`WLITE_OK` if the schemas match, `WLITE_NOT_FOUND` if they differ.
+`wl_schema_verify` takes a `wlite_db *` and a `const WlSchema *`. It is
+read-only. It does not modify the database. It returns `WLITE_OK` if the
+schemas match, `WLITE_NOT_FOUND` if they differ.
 
 This is the primary function for CI validation.
 
@@ -216,11 +263,13 @@ libwlite computes an FNV-1a hash of the schema. The hash is a 16-character
 hexadecimal string that captures the complete schema structure.
 
 ```c
-char *hash = wl_schema_hash(model->schema);
+WlSchema *live = wl_schema_inspect(db, NULL);
+char *hash = wl_schema_hash(live);
 if (hash) {
     printf("Schema hash: %s\n", hash);
     free(hash);
 }
+wl_schema_free(live);
 ```
 
 Output:
@@ -319,9 +368,9 @@ wlite_prepare(db,
     "FROM _wlite_migrations ORDER BY id",
     &stmt);
 
-while (wlite_step(stmt) == WLITE_ROW) {
-    printf("Migration %d: %s (applied %s)\n",
-        wlite_column_int(stmt, 0),
+while (wlite_step(stmt) == WLITE_OK) {
+    printf("Migration %lld: %s (applied %s)\n",
+        (long long)wlite_column_int64(stmt, 0),
         wlite_column_text(stmt, 1),
         wlite_column_text(stmt, 3));
 }
@@ -332,7 +381,7 @@ wlite_stmt_finalize(stmt);
 ### Rolling back
 
 ```c
-wlite_rollback_last(db, &error);
+wl_rollback_last(db, &error);
 ```
 
 This removes the most recent migration record from `_wlite_migrations`. It does
@@ -347,18 +396,41 @@ This compiled form skips parsing on subsequent loads.
 ### Compiling
 
 ```c
-wlite_result rc = wl_model_compile(model->schema, "schema.wlitem");
+WlSchema *schema = wl_schema_load("schema.wlite", NULL);
+int rc = wl_model_compile(schema, "schema.wlitem");
 if (rc != WLITE_OK) {
     fprintf(stderr, "compilation failed: %d\n", rc);
 }
+wl_schema_free(schema);
 ```
+
+`wl_model_compile` takes a `const WlSchema *` and an output file path. You
+can obtain the schema from `wl_schema_load` or `wl_schema_parse`.
 
 ### Loading compiled models
 
 ```c
+/* Read the compiled file into a buffer */
+FILE *f = fopen("schema.wlitem", "rb");
+fseek(f, 0, SEEK_END);
+size_t size = (size_t)ftell(f);
+fseek(f, 0, SEEK_SET);
+void *data = malloc(size);
+fread(data, 1, size, f);
+fclose(f);
+
 wlite_model *compiled = NULL;
-wlite_result rc = wlite_model_load_compiled("schema.wlitem", &compiled);
+wlite_result rc = wlite_model_load_compiled(data, size, &compiled);
+free(data);
+
+if (rc != WLITE_OK) {
+    fprintf(stderr, "failed to load compiled model: %d\n", rc);
+}
 ```
+
+`wlite_model_load_compiled` takes a pointer to the raw binary data and its
+size. It does not accept a file path. You must read the file yourself and
+pass the buffer.
 
 ### When to compile
 
@@ -440,7 +512,7 @@ int main(void) {
     wlite_error *error = NULL;
     wlite_result rc;
 
-    /* Load the model */
+    /* Load the model from a file */
     rc = wlite_model_load_file("schema.wlite", &model);
     if (rc != WLITE_OK) {
         fprintf(stderr, "failed to load model: %d\n", rc);
@@ -458,8 +530,7 @@ int main(void) {
     /* Migrate */
     rc = wlite_migrate(db, model);
     if (rc != WLITE_OK) {
-        fprintf(stderr, "migration failed: %s\n", error->message);
-        wlite_error_free(error);
+        fprintf(stderr, "migration failed with code %d\n", rc);
         wlite_close(db);
         wlite_model_free(model);
         return EXIT_FAILURE;
@@ -467,27 +538,25 @@ int main(void) {
 
     printf("Migration applied successfully\n");
 
-    /* Verify */
-    WlDiff *diff = NULL;
-    rc = wl_schema_verify(db, model->schema, &diff, NULL);
-    if (rc == WLITE_OK) {
-        printf("Schema matches model\n");
-    } else {
-        printf("Schema drift detected (%zu differences)\n", diff->entry_count);
-        wl_diff_free(diff);
-    }
-
-    /* Hash */
-    char *hash = wl_schema_hash(model->schema);
-    if (hash) {
-        printf("Schema hash: %s\n", hash);
-        free(hash);
+    /* Verify by inspecting the live schema */
+    WlSchema *live = wl_schema_inspect(db, NULL);
+    if (live) {
+        char *hash = wl_schema_hash(live);
+        if (hash) {
+            printf("Schema hash: %s\n", hash);
+            free(hash);
+        }
+        wl_schema_free(live);
     }
 
     /* Compile to .wlitem */
-    rc = wl_model_compile(model->schema, "schema.wlitem");
-    if (rc == WLITE_OK) {
-        printf("Model compiled to schema.wlitem\n");
+    WlSchema *schema = wl_schema_load("schema.wlite", NULL);
+    if (schema) {
+        int compile_rc = wl_model_compile(schema, "schema.wlitem");
+        if (compile_rc == WLITE_OK) {
+            printf("Model compiled to schema.wlitem\n");
+        }
+        wl_schema_free(schema);
     }
 
     /* Cleanup */
@@ -503,8 +572,10 @@ int main(void) {
 If you want to see the diff without applying it:
 
 ```c
-WlSchema *live = wl_schema_introspect(db->sqlite, NULL);
-WlDiff *diff = wl_schema_diff(live, model->schema, NULL);
+WlSchema *live = wl_schema_inspect(db, NULL);
+WlSchema *desired = wl_schema_load("schema.wlite", NULL);
+
+WlDiff *diff = wl_schema_diff(live, desired, NULL);
 
 if (diff->entry_count == 0) {
     printf("Schema is up to date\n");
@@ -516,16 +587,22 @@ if (diff->entry_count == 0) {
 }
 
 wl_diff_free(diff);
+wl_schema_free(desired);
 wl_schema_free(live);
 ```
+
+Both `wl_schema_inspect` and `wl_schema_load` return `WlSchema *` values
+that are interchangeable in the diffing and planning APIs.
 
 ## Generating SQL without executing
 
 To generate the migration SQL without executing it:
 
 ```c
-WlSchema *live = wl_schema_introspect(db->sqlite, NULL);
-WlPlan *plan = wl_plan_migration(live, model->schema, NULL);
+WlSchema *live = wl_schema_inspect(db, NULL);
+WlSchema *desired = wl_schema_load("schema.wlite", NULL);
+
+WlPlan *plan = wl_plan_migration(live, desired, NULL);
 
 if (plan) {
     for (size_t i = 0; i < plan->step_count; i++) {
@@ -536,6 +613,7 @@ if (plan) {
 }
 
 wl_plan_free(plan);
+wl_schema_free(desired);
 wl_schema_free(live);
 ```
 
@@ -550,6 +628,7 @@ Resources must be freed in the correct order to avoid use-after-free bugs:
 ```c
 wl_diff_free(diff);       /* if applicable */
 wl_plan_free(plan);       /* if applicable */
+wl_schema_free(live);     /* if applicable */
 wlite_close(db);          /* close database first */
 wlite_model_free(model);  /* then free model */
 ```
@@ -590,20 +669,6 @@ if (rc != WLITE_OK) {
 }
 ```
 
-### Detailed error info
-
-```c
-wlite_error *error = NULL;
-wlite_result rc = wlite_migrate(db, model, &error);
-if (rc != WLITE_OK) {
-    fprintf(stderr, "Error %d: %s\n", error->code, error->message);
-    if (error->sqlite_code) {
-        fprintf(stderr, "SQLite code: %d\n", error->sqlite_code);
-    }
-    wlite_error_free(error);
-}
-```
-
 ### Cleanup on error
 
 Always clean up in error paths. Use a goto-based cleanup pattern:
@@ -641,46 +706,46 @@ libwlite provides convenience functions for common SQL operations:
 ### Execute statements
 
 ```c
-wlite_exec(db, "PRAGMA journal_mode=WAL");
-wlite_exec(db, "INSERT INTO users (name) VALUES ('alice')");
+wlite_execute(db, "PRAGMA journal_mode=WAL", NULL);
+wlite_execute(db, "INSERT INTO users (name) VALUES ('alice')", NULL);
 ```
+
+`wlite_execute` takes the database handle, a SQL string, and an optional
+pointer to receive the number of rows affected. Pass `NULL` if you do not
+need the row count.
 
 ### Prepared statements with parameters
 
 ```c
 wlite_stmt *stmt;
 wlite_prepare(db, "SELECT * FROM users WHERE id = ?", &stmt);
-wlite_bind_int(stmt, 1, 42);
+wlite_bind_int64(stmt, 1, 42);
 
-while (wlite_step(stmt) == WLITE_ROW) {
+while (wlite_step(stmt) == WLITE_OK) {
     printf("%s\n", wlite_column_text(stmt, 0));
 }
 
 wlite_stmt_finalize(stmt);
 ```
 
-### Named parameters
-
-```c
-wlite_prepare(db, "SELECT * FROM users WHERE name = :name", &stmt);
-wlite_bind_named(stmt, ":name", "alice");
-```
+`wlite_bind_int64` takes a 64-bit integer value. There is no `wlite_bind_int`
+function in the public API.
 
 ### Transactions
 
 ```c
-wlite_exec(db, "BEGIN TRANSACTION");
-wlite_exec(db, "INSERT INTO users (name) VALUES ('alice')");
-wlite_exec(db, "INSERT INTO users (name) VALUES ('bob')");
-wlite_exec(db, "COMMIT");
+wlite_execute(db, "BEGIN TRANSACTION", NULL);
+wlite_execute(db, "INSERT INTO users (name) VALUES ('alice')", NULL);
+wlite_execute(db, "INSERT INTO users (name) VALUES ('bob')", NULL);
+wlite_execute(db, "COMMIT", NULL);
 ```
 
 ### Savepoints
 
 ```c
-wlite_exec(db, "SAVEPOINT sp1");
-wlite_exec(db, "INSERT INTO users (name) VALUES ('charlie')");
-wlite_exec(db, "ROLLBACK TO sp1");  /* undo just charlie */
+wlite_execute(db, "SAVEPOINT sp1", NULL);
+wlite_execute(db, "INSERT INTO users (name) VALUES ('charlie')", NULL);
+wlite_execute(db, "ROLLBACK TO sp1", NULL);  /* undo just charlie */
 ```
 
 ## Next steps
