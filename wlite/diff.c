@@ -175,22 +175,6 @@ static int pk_eq(WlPrimaryKey *a, WlPrimaryKey *b) {
     return 1;
 }
 
-/* ── Rename detection (conservative) ─────────────────────────────────── */
-
-static int name_similarity(const char *a, const char *b) {
-    if (!a || !b) return 0;
-    size_t len_a = strlen(a), len_b = strlen(b);
-    size_t max_len = len_a > len_b ? len_a : len_b;
-    if (max_len == 0) return 100;
-    size_t matches = 0;
-    size_t min_len = len_a < len_b ? len_a : len_b;
-    for (size_t i = 0; i < min_len; i++) {
-        if (tolower((unsigned char)a[i]) == tolower((unsigned char)b[i]))
-            matches++;
-    }
-    return (int)(matches * 100 / max_len);
-}
-
 /* ── Main diff engine ────────────────────────────────────────────────── */
 
 WlDiff *wl_schema_diff(const WlSchema *current, const WlSchema *desired, wlite_error **error) {
@@ -234,21 +218,14 @@ WlDiff *wl_schema_diff(const WlSchema *current, const WlSchema *desired, wlite_e
             WlColumn *cc = &ct->columns[j];
             WlColumn *dc = find_column(dt, cc->name);
             if (!dc) {
-                /* Check for possible rename */
+                /* Check for exact rename (same definition, different name) */
                 int renamed = 0;
                 for (size_t k = 0; k < dt->column_count; k++) {
                     WlColumn *maybe_new = &dt->columns[k];
                     if (find_column(ct, maybe_new->name)) continue; /* already exists */
                     if (cols_equal(cc, maybe_new)) {
-                        /* Same definition — different name, likely rename */
+                        /* Same definition, different name: confirmed rename */
                         diff_add(diff, WL_DIFF_RENAME_COLUMN, WL_SAFETY_SAFE,
-                                 dt->name, cc->name, maybe_new->name);
-                        renamed = 1;
-                        break;
-                    }
-                    if (cc->affinity == maybe_new->affinity &&
-                        name_similarity(cc->name, maybe_new->name) >= 60) {
-                        diff_add(diff, WL_DIFF_RENAME_COLUMN, WL_SAFETY_DESTRUCTIVE,
                                  dt->name, cc->name, maybe_new->name);
                         renamed = 1;
                         break;
