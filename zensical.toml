@@ -53,12 +53,12 @@ name = "libwlite on GitHub"
 Overview = [
   {Overview = "index.md"},
   {Architecture = "architecture.md"},
+  {"Grammar" = "grammar.md"},
 ]
 
 [[project.nav]]
 "API Reference" = [
   {"C API" = "c-api.md"},
-  {"Grammar" = "grammar.md"},
 ]
 
 [project.markdown_extensions]
