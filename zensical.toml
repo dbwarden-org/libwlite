@@ -53,6 +53,7 @@ name = "libwlite on GitHub"
 Overview = [
   {Overview = "index.md"},
   {"Grammar" = "grammar.md"},
+  {"Workflow" = "workflow.md"},
 ]
 
 [[project.nav]]

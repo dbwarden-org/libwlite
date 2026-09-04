@@ -105,12 +105,17 @@ if (r != WLITE_OK) {
 | Code | Value | Meaning |
 |------|-------|---------|
 | `WLITE_OK` | 0 | Success |
-| `WLITE_ERROR` | -1 | General error |
-| `WLITE_NOT_FOUND` | -2 | File or resource not found |
-| `WLITE_MEMORY` | -3 | Memory allocation failed |
-| `WLITE_IO` | -4 | I/O error (disk full, permission denied) |
-| `WLITE_CORRUPT` | -5 | Database or model file is corrupt |
-| `WLITE_RANGE` | -6 | Index out of range |
+| `WLITE_ERROR` | 1 | General or unexpected error |
+| `WLITE_INVALID_ARGUMENT` | 2 | Null pointer or invalid parameter |
+| `WLITE_OUT_OF_MEMORY` | 3 | Memory allocation failed |
+| `WLITE_IO_ERROR` | 4 | I/O error (disk full, permission denied, file not found) |
+| `WLITE_PARSE_ERROR` | 5 | Schema parse error (malformed .wlite source) |
+| `WLITE_MODEL_ERROR` | 6 | Schema model error (invalid table, missing field, etc.) |
+| `WLITE_SQLITE_ERROR` | 7 | SQLite returned an error |
+| `WLITE_CONSTRAINT_ERROR` | 8 | UNIQUE, CHECK, or FOREIGN KEY constraint violation |
+| `WLITE_NOT_FOUND` | 9 | Requested table, column, or resource not found |
+| `WLITE_BUSY` | 10 | Database is locked by another connection |
+| `WLITE_TRANSACTION_ERROR` | 11 | Transaction failed or is in an invalid state |
 
 ### Error messages
 
@@ -120,22 +125,25 @@ Use `wlite_strerror` to convert an error code to a human-readable string:
 wlite_result r = wlite_open("missing.db", &db);
 if (r != WLITE_OK) {
     fprintf(stderr, "Error %d: %s\n", r, wlite_strerror(r));
-    // Output: "Error -2: File not found"
 }
 ```
 
 ### Error objects
 
-For detailed error information (e.g., the SQL that failed, the SQLite error message), use `wlite_error`:
+For detailed error information, libwlite populates a `wlite_error` struct directly. Access its fields:
 
 ```c
 wlite_error *err = NULL;
-wlite_result r = wlite_migrate_with_error(db, model, &err);
+wlite_result r = wlite_migrate(db, model, &err);
 if (r != WLITE_OK) {
     fprintf(stderr, "Migration failed: %s\n", wlite_strerror(r));
     if (err) {
-        fprintf(stderr, "Detail: %s\n", wlite_error_message(err));
-        fprintf(stderr, "SQL: %s\n", wlite_error_sql(err));
+        fprintf(stderr, "Code: %d\n", err->code);
+        fprintf(stderr, "Message: %s\n", err->message);
+        fprintf(stderr, "Subsystem: %s\n", err->subsystem);
+        fprintf(stderr, "Object: %s\n", err->object);
+        fprintf(stderr, "SQLite code: %d\n", err->sqlite_code);
+        fprintf(stderr, "Line: %d\n", err->line);
         wlite_error_free(err);
     }
 }

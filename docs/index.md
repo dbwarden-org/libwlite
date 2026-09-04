@@ -251,8 +251,8 @@ int main(void) {
         return EXIT_FAILURE;
     }
 
-    while (wlite_step(stmt) == WLITE_ROW) {
-        int    id   = wlite_column_int(stmt, 0);
+    while (wlite_step(stmt) == WLITE_OK) {
+        int    id   = wlite_column_int64(stmt, 0);
         const char *name = wlite_column_text(stmt, 1);
         printf("user %d: %s\n", id, name);
     }
@@ -280,11 +280,26 @@ Save this file as `main.c`. The model file `app.wlite` should contain your
 schema definition. A minimal example:
 
 ```
-table users {
-    id   integer pk autoincrement
-    name text not null
-    email text unique
-    created_at text default current_timestamp
+model User {
+    table "users"
+
+    field id integer {
+        primary_key
+        autoincrement
+    }
+
+    field name text {
+        not_null
+    }
+
+    field email text {
+        unique
+    }
+
+    field created_at datetime {
+        not_null
+        default CURRENT_TIMESTAMP
+    }
 }
 ```
 
@@ -311,20 +326,12 @@ make
 
 # Build and run the test suite
 make test
-
-# Build with debug symbols and address sanitizer
-make DEBUG=1
-
-# Build optimized release binaries
-make RELEASE=1
 ```
 
 The Makefile produces:
 
 - `libwlite.a` - static archive for linking into executables
 - `libwlite.so` - shared library for dynamic linking
-- `wlite` - the command line interface tool
-- Object files in `obj/`
 
 Running `make test` compiles and executes the full test suite. Tests cover model
 parsing, schema comparison, migration generation, prepared statements,
@@ -348,7 +355,7 @@ cmake --build .
 ctest
 
 # Build with specific options
-cmake -DENABLE_TESTS=OFF -DCMAKE_BUILD_TYPE=Release ..
+cmake -DWLITE_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release ..
 cmake --build .
 ```
 
@@ -356,14 +363,15 @@ CMake produces:
 
 - `libwlite.a` - static archive
 - `libwlite.so.0.2.0` - shared library with SOVERSION 0
-- `wlite` - the command line interface tool
+- `wlite` - the command line interface tool (when WLITE_BUILD_CLI is ON)
 - `wlite.pc` - pkg-config file for dependency detection
-- CMake package config files for `find_package(wlite)` support
 
 The CMake build supports the following options:
 
-- `ENABLE_TESTS` - build the test suite (default: ON)
-- `ENABLE_CLI` - build the wlite CLI tool (default: ON)
+- `WLITE_BUILD_SHARED` - build the shared library (default: ON)
+- `WLITE_BUILD_STATIC` - build the static library (default: ON)
+- `WLITE_BUILD_CLI` - build the wlite CLI tool (default: ON)
+- `WLITE_BUILD_TESTS` - build the test suite (default: ON)
 - `CMAKE_BUILD_TYPE` - Release, Debug, RelWithDebInfo, MinSizeRel
 - `CMAKE_INSTALL_PREFIX` - installation prefix (default: /usr/local)
 
@@ -389,8 +397,6 @@ The Make install copies:
 
 - `libwlite.a` and `libwlite.so` to `$PREFIX/lib/`
 - Header files to `$PREFIX/include/wlite/`
-- The `wlite` CLI to `$PREFIX/bin/`
-- `wlite.pc` to `$PREFIX/lib/pkgconfig/`
 
 ### CMake install
 
@@ -405,9 +411,8 @@ The CMake install copies:
 
 - `libwlite.a` and `libwlite.so.0.2.0` to `$PREFIX/lib/`
 - Headers to `$PREFIX/include/wlite/`
-- The `wlite` CLI to `$PREFIX/bin/`
+- The `wlite` CLI to `$PREFIX/bin/` (when WLITE_BUILD_CLI is ON)
 - `wlite.pc` to `$PREFIX/lib/pkgconfig/`
-- CMake config files to `$PREFIX/lib/cmake/wlite/`
 
 ### pkg-config
 

@@ -243,7 +243,7 @@ Or include it directly in your build system. The library has no configuration op
 To build libwlite from source:
 
 ```
-git clone https://github.com/dbwarden/libwlite.git
+git clone https://github.com/dbwarden-org/libwlite.git
 cd libwlite
 make
 ```
