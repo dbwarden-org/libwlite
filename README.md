@@ -6,6 +6,10 @@ A small C library for SQLite schema management, migrations, and queries.
 
 libwlite parses `.wlite` model files, manages SQLite databases, compares schemas, generates migrations, and provides prepared statements with transactions and savepoints. It is the core runtime that powers the `wlite` CLI and all language bindings.
 
+## Relationship to dbwarden
+
+libwlite follows [dbwarden](https://github.com/dbwarden-org/dbwarden) and mirrors its SQLite3 backend patterns: table rebuilds, collapse logic, type normalization, default handling, and constraint diffing. The dbwarden SQLite backend is the reference implementation. A CI workflow enforces that libwlite's SQLite behavior stays synchronized with dbwarden.
+
 ## Quick Start
 
 ```c
