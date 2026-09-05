@@ -87,13 +87,13 @@ void t_compiled(void) { TEST("compiled model roundtrip");
     if(!ok){FAIL("diff");} else PASS();
 }
 void t_compiled_meta(void) { TEST("compiled model metadata");
-    const char *s="model_config{name\"test\"version 7}model X{table\"t\"field id integer{primary_key}}";
+    const char *s="model_config \"test\" 7 model X{table\"t\"field id integer{primary_key}}";
     WlSchema *o=parse(s);
     wl_model_compile(o,"/tmp/tcm.wlitem");
     FILE *f=fopen("/tmp/tcm.wlitem","rb"); fseek(f,0,SEEK_END); long sz=ftell(f); fseek(f,0,SEEK_SET);
     char *buf=malloc(sz); fread(buf,1,sz,f); fclose(f);
     WlSchema *l=wl_model_load_compiled_raw(buf,sz); free(buf);
-    int ok=(l&&strcmp(wl_schema_model_name(l),"test")==0&&wl_schema_model_version(l)==7);
+    int ok=(l&&wl_schema_model_name(l)&&strcmp(wl_schema_model_name(l),"test")==0&&wl_schema_model_version(l)==7);
     wl_schema_free(l); wl_schema_free(o); remove("/tmp/tcm.wlitem");
     if(!ok){FAIL("meta");} else PASS();
 }
@@ -263,6 +263,25 @@ void t_tx_drollback(void) { TEST("tx double rollback safe");
     if(t) wlite_rollback(t); /* t is NULL, this is a no-op check */
     wlite_close(d); PASS();
 }
+void t_parse_suffix(void) { TEST("parse: text(10) suffix");
+    WlSchema *s = parse("model X{table\"t\"field a text(10)}");
+    if(!s||s->table_count!=1||s->tables[0].column_count!=1){FAIL("parse");if(s)wl_schema_free(s);return;}
+    if(strcmp(s->tables[0].columns[0].type_name,"text(10)")!=0){FAIL("type");wl_schema_free(s);return;}
+    wl_schema_free(s); PASS();
+}
+void t_parse_suffix_varchar(void) { TEST("parse: VARCHAR(255) suffix");
+    WlSchema *s = parse("model X{table\"t\"field a VARCHAR(255)}");
+    if(!s||s->table_count!=1){FAIL("parse");if(s)wl_schema_free(s);return;}
+    if(strcmp(s->tables[0].columns[0].type_name,"VARCHAR(255)")!=0){FAIL("type");wl_schema_free(s);return;}
+    wl_schema_free(s); PASS();
+}
+void t_parse_model_config(void) { TEST("parse: model_config");
+    WlSchema *s = parse("model_config \"myapp\" 1.0 model User{table\"users\"field id integer}");
+    if(!s||s->table_count!=1){FAIL("parse");if(s)wl_schema_free(s);return;}
+    if(!s->model_name||strcmp(s->model_name,"myapp")!=0){FAIL("name");wl_schema_free(s);return;}
+    if(s->model_version!=1){FAIL("version");wl_schema_free(s);return;}
+    wl_schema_free(s); PASS();
+}
 
 int main(void) {
     printf("wlite comprehensive tests\n\n");
@@ -276,6 +295,7 @@ int main(void) {
     t_diff_api(); t_verify_match(); t_verify_mismatch();
     t_err_nulldb(); t_err_nullmodel(); t_err_badsql(); t_err_badprep();
     t_tx_dcommit(); t_tx_drollback();
+    t_parse_suffix(); t_parse_suffix_varchar(); t_parse_model_config();
     printf("\n%d/%d passed\n", P, T);
     return P == T ? 0 : 1;
 }

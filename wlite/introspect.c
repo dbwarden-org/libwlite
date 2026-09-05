@@ -67,8 +67,8 @@ static int introspect_table(sqlite3 *db, const char *table_name,
             col.type_name = strdup((const char *)sqlite3_column_text(stmt, 2));
             col.affinity = resolve_affinity(col.type_name);
             col.not_null = sqlite3_column_int(stmt, 3);
-            col.default_expr = strdup(sqlite3_column_text(stmt, 4)
-                ? (const char *)sqlite3_column_text(stmt, 4) : "");
+            col.default_expr = sqlite3_column_text(stmt, 4)
+                ? strdup((const char *)sqlite3_column_text(stmt, 4)) : NULL;
             col.primary_key = sqlite3_column_int(stmt, 5);
             /* column 6 = pk (1=single PK, part of composite PK) */
             /* column 7 = hidden */

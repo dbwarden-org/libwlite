@@ -99,6 +99,11 @@ static void render_column(WlColumn *c, char **out, size_t *len, int strict) {
 /* ── Generate CREATE TABLE SQL ───────────────────────────────────────── */
 
 static char *generate_create_table(const WlTable *t) {
+    /* Handle empty tables (no columns) */
+    if (t->column_count == 0) {
+        char *result = sqlprintf("CREATE TABLE %s (_wlite_dummy INTEGER);", t->name);
+        return result;
+    }
     char *body = NULL;
     size_t body_len = 0;
 

@@ -47,3 +47,4 @@ test: libwlite.a
 	$(CC) -g -I include -o tests/test_wlite tests/test_wlite.c -L. -lwlite $(LIBS) && LD_LIBRARY_PATH=. ./tests/test_wlite
 	$(CC) -g -I include -o tests/test_edge tests/test_edge_cases.c -L. -lwlite $(LIBS) && LD_LIBRARY_PATH=. ./tests/test_edge
 	$(CC) -g -I include -o tests/test_conformance tests/conformance.c -L. -lwlite $(LIBS) && LD_LIBRARY_PATH=. ./tests/test_conformance
+	$(CC) -g -I include -o tests/test_comprehensive tests/test_comprehensive.c -L. -lwlite $(LIBS) && LD_LIBRARY_PATH=. ./tests/test_comprehensive
